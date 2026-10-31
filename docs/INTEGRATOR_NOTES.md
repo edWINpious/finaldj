@@ -36,7 +36,10 @@ The canonical schema has no field for rule hits. Until you add one, web puts the
 "tags": ["probe:sqli", "owasp:A03"]
 ```
 
-- `category` is always `probe_detected` for input signatures. Web never claims an exploit succeeded.
+- `category`: `probe_detected` (input signatures, path probes), `behavior_detected` (route scan, failed login, brute force, spraying) or `decoy_interaction` (decoy credential accepted). Web never claims an exploit succeeded.
+- `field`: `path`, `query.<name>`, `form.<name>`, `json.<dotted.name>` or `upload`. The matched value itself is never included.
+- Rules and thresholds (all in the web module's PLAN.md §5): W-ENUM-01 sensitive path (low), W-ENUM-02 ≥8 distinct 403/404/bait paths in 60 s (T1595.003), W-AUTH-01 failed login, W-AUTH-02 ≥5 / ≥15 failures for one username in 60 s (T1110.001, medium / high), W-AUTH-03 ≥4 usernames with ≤2 tries each in 5 min (T1110.003), W-AUTH-04 decoy login accepted (high), W-SQLI-01 (T1190), W-XSS-01, W-PATH-01, W-SSRF-01, W-UPL-01, W-IDOR-01, W-SHELL-01.
+- Full attack-campaign sample (24 events, one campaign ID, every rule firing): `services/web/samples/web-attack-campaign.sample.jsonl`.
 - `attack[].status` is `candidate`. Your alert layer decides whether to promote a candidate to an alert mapping.
 - `T1505.003` is never emitted for a webshell path probe.
 - If you add a first-class schema field (e.g. `detections`), tell the web owner and the adapter will move the data there.

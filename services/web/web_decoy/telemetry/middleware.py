@@ -31,8 +31,13 @@ from .schema import CanonicalEvent
 
 CAMPAIGN_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 PROBE_STATUSES = {401, 403, 404, 405}
-DETECTION_KEYS = ("rule", "category", "label", "field", "owasp", "confidence", "rationale")
-ATTACK_KEYS = ("technique", "status", "rationale", "confidence")
+MAX_DETECTIONS = 10
+# Fixed-vocabulary keys come from our own rule catalogue: allow a strict charset and
+# skip secret-pattern redaction (which would mangle labels like "auth:failed").
+VOCAB_KEYS = ("rule", "category", "label", "owasp", "confidence")
+TEXT_KEYS = ("field", "rationale")             # free text: always redacted + bounded
+ATTACK_VOCAB = ("technique", "status", "confidence")
+VOCAB_RE = re.compile(r"[^A-Za-z0-9:._ /-]")
 
 
 @dataclass
@@ -48,6 +53,7 @@ class RequestContext:
     status: int
     authenticated: bool
     route: dict[str, Any] = field(default_factory=dict)
+    session_user_id: int | None = None
 
 
 Detector = Callable[[RequestContext], list[dict[str, Any]]]
@@ -69,13 +75,21 @@ def _source_ip(scope, headers: dict[str, str], trust_proxy: bool) -> tuple[str, 
 def _sanitize_detection(d: dict[str, Any]) -> dict[str, Any]:
     """Detectors can only emit known keys, and every string is redacted/bounded,
     so a detector bug cannot leak a raw value (e.g. a password) into the event."""
-    out: dict[str, Any] = {k: redact.safe_value(d[k], 256) for k in DETECTION_KEYS if k in d}
+    out: dict[str, Any] = {k: _vocab(d[k]) for k in VOCAB_KEYS if k in d}
+    out.update({k: redact.safe_value(d[k], 256) for k in TEXT_KEYS if k in d})
     attacks = d.get("attack") or []
-    out["attack"] = [
-        {k: redact.safe_value(a[k], 256) for k in ATTACK_KEYS if k in a}
-        for a in attacks[:5] if isinstance(a, dict)
-    ]
+    out["attack"] = []
+    for a in attacks[:5]:
+        if isinstance(a, dict):
+            item = {k: _vocab(a[k]) for k in ATTACK_VOCAB if k in a}
+            if "rationale" in a:
+                item["rationale"] = redact.safe_value(a["rationale"], 256)
+            out["attack"].append(item)
     return out
+
+
+def _vocab(value: Any) -> str:
+    return VOCAB_RE.sub("", str(value))[:80]
 
 
 class TelemetryMiddleware:
@@ -201,7 +215,8 @@ class TelemetryMiddleware:
 
         # Detectors see RAW values; their output is sanitized (PLAN §0.1 P5).
         ctx = RequestContext(method, path, query, form, json_pairs, headers, source_ip, status,
-                             session is not None or bool(route.get("session_id")), route)
+                             session is not None or bool(route.get("session_id")), route,
+                             session.user_id if session else None)
         detections: list[dict[str, Any]] = []
         for detector in fastapi_app.state.detectors:
             try:
@@ -224,7 +239,7 @@ class TelemetryMiddleware:
             evidence["body"] = body_note
         if route.get("upload"):
             evidence["upload"] = route["upload"]
-        evidence["detections"] = detections
+        evidence["detections"] = detections[:MAX_DETECTIONS]
         evidence = redact.bound_evidence(evidence)
 
         request_path = redact.safe_value(path, 2048)
@@ -249,7 +264,7 @@ class TelemetryMiddleware:
                 tags.append("untrusted_campaign_header")
         if reject is not None:
             tags.append("body_rejected")
-        for d in detections:
+        for d in detections[:MAX_DETECTIONS]:
             if d.get("label") and d["label"] not in tags:
                 tags.append(d["label"])
 

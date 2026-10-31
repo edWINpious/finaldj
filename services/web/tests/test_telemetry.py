@@ -176,7 +176,10 @@ def test_detectors_see_raw_values_but_events_never_contain_them(settings):
     c.post("/login", data={"username": GOOD_USER, "password": secret})
     assert seen["password"] == secret                       # detector saw the raw value
     e = last(settings)
-    d = e["raw_evidence_redacted"]["detections"][0]
+    d = next(x for x in e["raw_evidence_redacted"]["detections"] if x["rule"] == "TEST-SQLI")
+    # The real Phase 4 detectors also saw this password (SQLi-like) and must not leak it either.
+    assert any(x["rule"] == "W-SQLI-01" and x["field"] == "form.password"
+               for x in e["raw_evidence_redacted"]["detections"])
     assert d["rule"] == "TEST-SQLI" and d["field"] == "password"
     assert "value" not in d and "raw" not in d["attack"][0]  # unknown keys dropped
     assert "hunter2" not in open(settings.event_log_path).read()
@@ -204,3 +207,23 @@ def test_log_write_failure_never_breaks_requests(tmp_path):
     assert app.state.emitter.log.write_errors == 1
     lab = TestClient(app, client=(LAB_IP, 1))
     assert lab.get("/health").json()["status"] == "degraded"
+
+
+def test_detection_labels_are_not_mangled_by_redaction(settings):
+    """Bug found in Phase 4: 'auth:failed' matched the 'auth: <secret>' redaction pattern."""
+    app = create_app(settings)
+    app.state.detectors = [lambda ctx: [{"rule": "R", "label": "auth:bruteforce", "owasp": "A07:2021-X",
+                                         "attack": [{"technique": "T1110.001", "status": "candidate"}]}]]
+    TestClient(app, client=(OUTSIDE_IP, 1)).get("/")
+    e = last(settings)
+    assert "auth:bruteforce" in e["tags"]
+    d = e["raw_evidence_redacted"]["detections"][0]
+    assert d["label"] == "auth:bruteforce" and d["attack"][0]["technique"] == "T1110.001"
+
+
+def test_vocab_fields_cannot_smuggle_values(settings):
+    app = create_app(settings)
+    app.state.detectors = [lambda ctx: [{"rule": "R<script>\n", "label": "x" * 500}]]
+    TestClient(app, client=(OUTSIDE_IP, 1)).get("/")
+    d = last(settings)["raw_evidence_redacted"]["detections"][0]
+    assert d["rule"] == "Rscript" and len(d["label"]) == 80

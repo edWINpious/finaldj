@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .config import Settings
+from .detection import default_detectors
 from .errors import SECURITY_HEADERS, nginx_error
 from .routes import api, auth, health, pages, traps
 from .sessions import SessionStore
@@ -37,7 +38,7 @@ def create_app(settings: Settings | None = None, emitter: Emitter | None = None)
     app.state.sessions = SessionStore(settings.max_sessions)
     app.state.started_at = time.monotonic()
     app.state.emitter = emitter
-    app.state.detectors = []          # Phase 4 registers detection functions here
+    app.state.detectors = default_detectors(settings)   # signatures + per-source behaviour
     app.state.telemetry_errors = 0
 
     @app.middleware("http")

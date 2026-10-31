@@ -34,6 +34,7 @@ uses a read-only copy of it and never changes it on its own.
 | P6 | The schema has no field for detection results | Agreed: `raw_evidence_redacted.detections[]` + `tags`, with a fixed sub-shape documented in `docs/INTEGRATOR_NOTES.md` §2 | Web + integrator |
 | P7 | Dev Python (3.13) ≠ spec (3.12) | Use `python3.12` locally and the pinned 3.12 image for evidence runs | Web (here) |
 | P8 | A detailed `/health` on the attacker-facing port shows it's a honeypot (new conflict from decision Q5) | Detailed JSON only for sources in `HEALTH_ALLOWED_CIDRS`. Everyone else gets the site's normal 404 (§3.1, §6) | Web (here) |
+| P11 | *(found in Phase 4 by a detection test)* Detection labels were passed through secret redaction, so `auth:failed` matched the `auth: <secret>` pattern and became `auth:[REDACTED]`. Every brute-force and spraying tag would have reached the dashboard garbled | Fixed-vocabulary fields (rule, label, OWASP, ATT&CK ID) are checked against a strict charset instead of redacted; free text (rationale, field) is still redacted. Regression tests added | Web (here) |
 | P10 | *(found in Phase 3 by a redaction test)* Secret patterns began with `\b`, so a secret glued to other text (`aaaeyJ…` JWT, `mypassword=…`, `xAKIA…`) has no word boundary and **was not redacted** | Leading boundaries removed; over-redaction is the safe failure mode. Regression tests `test_secret_glued_to_text_is_redacted` | Web (here) |
 | P9 | *(found in Phase 2 container test)* Requests through the published port reach the app from the Docker gateway `172.28.0.1`. A `/16` allowlist therefore trusted every host-side request, and every host-run attack shares one source IP | Allowlists default to single `/32`s (health: `127.0.0.1/32`; simulator: `172.28.0.50/32`). **The simulator must run as a container on `lab_net` with its own fixed IP**, or attacker profiles collapse onto one IP. Written up in `docs/INTEGRATOR_NOTES.md` §4 | Web + integrator + simulator owner |
 
@@ -268,8 +269,20 @@ pathological strings and checks the time budget.
 | W-IDOR-01 | P1 | Synthetic IDOR | Logged-in user requests another synthetic user's `/api/v1/users/{id}` | `authz:idor_attempt`; OWASP A01 | medium |
 | W-SHELL-01 | P1 | Webshell path probe | Request to known webshell paths | `probe:webshell_path`; **never** T1505.003 | low |
 
-Every detection is labelled `probe_detected`. No rule claims an exploit
-succeeded. Behaviour windows live in memory, bounded by an LRU of 10k sources,
+**As built (Phase 4):**
+- `category` is `probe_detected` (input signatures and path probes), `behavior_detected`
+  (scan, failed login, brute force, spraying) or `decoy_interaction` (decoy login accepted).
+  No rule claims an exploit succeeded; probe events keep `outcome: observed`.
+- `field` is where the match was found: `path`, `query.<name>`, `form.<name>`,
+  `json.<dotted.name>` or `upload`. The matched value is never stored, not even in `rationale`.
+- One detection per rule per request; if several fields match, the rationale says
+  "matched in N fields". At most 10 detections per event.
+- W-AUTH-04 carries no ATT&CK technique (a decoy login is not itself a technique).
+  W-UPL-01 uses OWASP A04 (CWE-434, unrestricted upload).
+- W-ENUM-02 fires once per source per 60 s window; W-AUTH-02 fires at 5 (medium) and
+  15 (high) failures within 60 s; W-AUTH-03 fires once per 5 min window.
+
+No rule claims an exploit succeeded. Behaviour windows live in memory, bounded by an LRU of 10k sources,
 and reset when the container restarts. That limit is documented. Cross-service
 correlation and alerting belong to the collector, not here.
 
@@ -347,6 +360,8 @@ The owner can reverse any decision marked "Claude" at any phase review.
 ## 10. Known limitations (stated up front)
 
 - Behaviour windows are per-process and in memory. A restart resets brute-force counters.
+- Following the `/admin` → `/admin/login` redirect counts as two bait hits toward the route-scan threshold.
+- Signature rules are pattern-based: novel or heavily obfuscated payloads will be missed, and unusual benign input can trigger them (15 benign samples are tested as non-matching).
 - Detection is signature-based. Encoded or obfuscated payloads beyond double URL-encoding may be missed.
 - Without TLS in the lab, the decoy can't see HTTPS-only scanners. OpenCanary is not planned.
 - Until the integrator publishes `collector/schema.py`, the local schema copy can drift from it. Phase 5 replaces it.

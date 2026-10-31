@@ -3,9 +3,10 @@
 FastAPI web honeypot for the deception-driven SOC project. Everything in it is synthetic.
 It never executes, evaluates, fetches or opens anything an attacker sends.
 
-**Status: Phase 3 (safe telemetry).** Every request becomes one redacted canonical event, written to
-a JSONL log and POSTed to the collector. Detection rules (Phase 4) are not built yet, so
-`detections` is always empty. See `../../PLAN.md` and `../../PROJECT_STATUS.md`.
+**Status: Phase 4 (detection).** Every request becomes one redacted canonical event, written to
+a JSONL log and POSTed to the collector, with `raw_evidence_redacted.detections` filled by 13
+signature/behaviour rules (route scans, brute force, spraying, decoy login, SQLi, XSS, path traversal,
+SSRF, suspicious upload, IDOR, webshell probes). See `../../PLAN.md` §5 and `../../PROJECT_STATUS.md`.
 
 ## Watching events
 
@@ -87,7 +88,8 @@ and `--limit-concurrency 200`.
 
 ## Known limitations
 
-- No detection rules yet (Phase 4).
+- Detection state (brute-force/scan windows) is in memory and resets on restart.
+- Signature rules are pattern-based; obfuscated payloads can be missed and unusual benign input can match.
 - `/health` stays `degraded` after a manual replay until the next live delivery succeeds.
 - `lab_net` is not `internal`, because Docker can't publish ports from an internal network. Egress blocking and the isolation proof are Phase 5.
 - No TLS, so the session cookie has no `Secure` flag. Lab use on localhost only.
