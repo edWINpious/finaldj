@@ -46,6 +46,10 @@ docker compose -f docker-compose.web.yml exec web-decoy tail -n 30 /data/web-eve
 
 ## B. Solo rehearsal (no simulator, no dashboard)
 
+**Helpers:** load once per PowerShell window, from any folder:
+`. .\services\web\scripts\demo_helpers.ps1` (from the repo root). It gives you `Last`, `Rules`, `ClearLog`,
+`DemoFiles` and `CleanFiles`, and they find the event log themselves.
+
 Run without Docker so you can send requests from this machine. Do this in `services/web`, with the venv active.
 **Use `python -m web_decoy.serve`, not plain `uvicorn`:** plain uvicorn trusts a forged
 `X-Forwarded-For` from localhost (PLAN P13) and has no slow-header deadline.
