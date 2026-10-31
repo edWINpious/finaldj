@@ -1,4 +1,27 @@
+import sys
+
 import pytest
+
+
+def _check_environment():
+    """Fail fast with one clear message instead of hundreds of confusing errors
+    when pytest is run by the wrong Python (e.g. the global install, not .venv)."""
+    import starlette
+    problems = []
+    if sys.version_info[:2] < (3, 12):
+        problems.append(f"Python {sys.version.split()[0]} (need 3.12+)")
+    major, minor = (int(x) for x in starlette.__version__.split(".")[:2])
+    if (major, minor) < (1, 0):
+        problems.append(f"starlette {starlette.__version__} (need the pinned version from requirements.txt)")
+    if problems:
+        raise pytest.UsageError(
+            "Wrong Python environment: " + "; ".join(problems) + f"\n  Running: {sys.executable}\n"
+            "  Fix: cd services/web, activate the venv (Windows: .\\.venv\\Scripts\\Activate.ps1), "
+            "then run: python -m pytest -q"
+        )
+
+
+_check_environment()
 from fastapi.testclient import TestClient
 
 from web_decoy.app import create_app
