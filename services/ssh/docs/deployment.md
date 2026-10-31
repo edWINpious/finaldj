@@ -116,6 +116,4 @@ COWRIE_SOC_LOG_DIR=/path/to/cowrie/var/log/cowrie COWRIE_SOC_STATE_DB=./state/co
 
 ## Reset after a demo
 
-```bash
-docker compose --profile dev --profile demo down -v   # removes containers AND all volumes (logs, state)
-```
+Do not use `down -v`, `docker volume rm` or `docker volume prune`. In the merged project they can delete shared database and SOC data. Leave volumes in place between demos.

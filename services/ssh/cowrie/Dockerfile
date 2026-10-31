@@ -15,12 +15,12 @@ COPY decoy-fs /build/decoy-fs
 COPY cowrie.cfg userdb.txt /build/etc/
 RUN ["/cowrie/cowrie-env/bin/python3", "/build/build_fs.py", "/build/decoy-fs", "/build/etc/fs.pickle"]
 RUN ["/cowrie/cowrie-env/bin/python3", "-c", "import os; [os.chmod(os.path.join('/build/etc', f), 0o444) for f in os.listdir('/build/etc')]; os.chmod('/build/etc', 0o555)"]
-COPY strip_password_logging.py /build/strip_password_logging.py
-RUN ["/cowrie/cowrie-env/bin/python3", "/build/strip_password_logging.py", "/cowrie/cowrie-git/src/cowrie/core/checkers.py", "/build/patched/checkers.py"]
+COPY harden_cowrie.py soc_redact.py /build/
+RUN ["/cowrie/cowrie-env/bin/python3", "/build/harden_cowrie.py", "/cowrie/cowrie-git/src/cowrie", "/build/patched", "/build/soc_redact.py"]
 
 FROM ${COWRIE_IMAGE}
 # Root-owned and read-only for the cowrie user (uid 999).
 COPY --from=fsbuild --chown=0:0 /build/etc /etc/cowrie
-COPY --from=fsbuild --chown=0:0 /build/patched/checkers.py /cowrie/cowrie-git/src/cowrie/core/checkers.py
+COPY --from=fsbuild --chown=0:0 /build/patched/ /cowrie/cowrie-git/src/cowrie/
 USER 999:999
 EXPOSE 2222

@@ -87,6 +87,4 @@ python -m cowrie_soc replay tests/fixtures/real_capture_2026-10-31.json --config
 
 ## Reset
 
-```bash
-docker compose --profile dev --profile demo down -v
-```
+Do not use `down -v`, `docker volume rm` or `docker volume prune`. In the merged project they can delete shared database and SOC data. Leave volumes in place between demos.

@@ -124,7 +124,7 @@ def test_redirect_is_not_followed_and_is_retryable(status: int) -> None:
         with pytest.raises(SinkError) as exc:
             sink.send([{"a": 1}])
         assert exc.value.retryable
-        assert "/ingest/" in str(exc.value)
+        assert "redirect" in str(exc.value) and "/ingest/" not in str(exc.value)  # Location is not stored
         assert handler.requests == [("POST", "/ingest")]  # no follow-up GET/POST
     finally:
         server.shutdown()

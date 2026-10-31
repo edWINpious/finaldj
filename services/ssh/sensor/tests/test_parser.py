@@ -49,7 +49,7 @@ def test_malformed_lines_are_rejected_with_reason(data: str, reason: str) -> Non
     result = parse_line(raw(data))
     assert isinstance(result, ParseError)
     assert reason in result.reason
-    assert result.offset == 42 and result.excerpt
+    assert result.offset == 42 and result.excerpt == ""
 
 
 def test_bad_port_rejected() -> None:

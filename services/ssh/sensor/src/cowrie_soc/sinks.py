@@ -66,6 +66,8 @@ class JsonlSink:
 
 # HTTP statuses worth retrying; any other 4xx means the request itself is wrong.
 _RETRYABLE_STATUS = {408, 425, 429, 500, 502, 503, 504}
+MAX_TOKEN_CHARS = 4096
+MAX_RESPONSE_BYTES = 4096
 
 
 def _redact_url(url: str) -> str:
@@ -97,6 +99,7 @@ class HttpSink:
         url: str,
         encoder: Encoder,
         token_env: str | None = None,
+        token_file: str = "",
         timeout: float = 5.0,
         batch_size: int = 100,
         verify_tls: bool = True,
@@ -109,34 +112,50 @@ class HttpSink:
         self.display_url = _redact_url(url)  # never log credentials embedded in the URL
         self.encoder = encoder
         self.token_env = token_env
+        self.token_file = token_file
         self.timeout = timeout
         self.batch_size = batch_size
         self.extra_headers = dict(extra_headers or {})
         ssl_context = None if verify_tls else ssl._create_unverified_context()  # noqa: S323 - opt-in lab use
-        self.opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ssl_context), _NoRedirect())
+        # ProxyHandler({}): never pick up a proxy from the environment.
+        self.opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=ssl_context), _NoRedirect(),
+        )
+
+    def _token(self) -> str:
+        """Read at send time. Neither the value nor a read error's text is ever stored or logged."""
+        if not self.token_file:
+            return os.environ.get(self.token_env, "") if self.token_env else ""
+        try:
+            with open(self.token_file, encoding="utf-8") as fh:
+                token = fh.read(MAX_TOKEN_CHARS + 1).strip()
+        except (OSError, UnicodeError):
+            raise SinkError("cannot read the token file", retryable=True) from None
+        if not token or len(token) > MAX_TOKEN_CHARS or any(c in token for c in "\r\n"):
+            raise SinkError("the token file is not usable", retryable=True)
+        return token
 
     def send(self, records: list[dict[str, Any]]) -> None:
         body = json.dumps(self.encoder.encode_batch(records), separators=(",", ":"), ensure_ascii=False).encode()
         headers = {"Content-Type": "application/json", "User-Agent": "cowrie-soc/0.1", **self.extra_headers}
-        token = os.environ.get(self.token_env, "") if self.token_env else ""
+        token = self._token()
         if token:
             headers["Authorization"] = f"Bearer {token}"
         req = urllib.request.Request(self.url, data=body, headers=headers, method="POST")
         try:
             with self.opener.open(req, timeout=self.timeout) as resp:
-                resp.read(4096)
+                resp.read(MAX_RESPONSE_BYTES)  # drained and discarded, never stored
         except urllib.error.HTTPError as exc:
+            exc.close()  # status code only: response bodies and headers are not stored
             if 300 <= exc.code < 400:
                 # Configuration problem, not a data problem: keep the records queued until the URL is fixed.
-                location = exc.headers.get("Location", "?") if exc.headers else "?"
                 raise SinkError(
-                    f"HTTP {exc.code} redirect from {self.display_url} to {location}; redirects are not followed - "
+                    f"HTTP {exc.code} redirect from {self.display_url}; redirects are not followed - "
                     "set the exact ingest URL", retryable=True,
-                ) from exc
-            detail = exc.read(512).decode("utf-8", "replace")
-            raise SinkError(f"HTTP {exc.code} from {self.display_url}: {detail}", retryable=exc.code in _RETRYABLE_STATUS) from exc
+                ) from None
+            raise SinkError(f"HTTP {exc.code} from {self.display_url}", retryable=exc.code in _RETRYABLE_STATUS) from None
         except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as exc:
-            raise SinkError(f"cannot reach {self.display_url}: {exc}", retryable=True) from exc
+            raise SinkError(f"cannot reach {self.display_url}: {type(exc).__name__}", retryable=True) from None
 
 
 class Deliverer:

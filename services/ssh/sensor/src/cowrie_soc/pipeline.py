@@ -7,7 +7,7 @@ import threading
 import time
 from collections import Counter
 from collections.abc import Iterable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from cowrie_soc.config import Config
@@ -15,6 +15,7 @@ from cowrie_soc.detection import DetectionEngine
 from cowrie_soc.encoders import make_encoder
 from cowrie_soc.normalize import NormalizeConfig, normalize
 from cowrie_soc.parser import ParsedEvent, ParseError, RawLine, parse_line
+from cowrie_soc.redact import sanitize_event
 from cowrie_soc.sinks import Deliverer, HttpSink, JsonlSink, Sink
 from cowrie_soc.store import Store
 from cowrie_soc.tailer import LogFollower
@@ -57,22 +58,27 @@ class Processor:
                 quarantined.append(parsed)
                 continue
             assert isinstance(parsed, ParsedEvent)
+            # Second check: nothing is stored from a line that was not cleaned here, even if
+            # Cowrie's own cleaning was bypassed.
+            parsed = replace(parsed, event=sanitize_event(parsed.event), raw_text="")
             try:
                 event = normalize(parsed, self.norm_cfg)
                 findings = self.engine.process(event)
             except Exception as exc:  # noqa: BLE001 - one bad line must not stall the whole stream
                 # Quarantine instead of raising: a raise would make step() re-read the whole batch,
-                # double-counting detection state for the lines before this one.
+                # double-counting detection state for the lines before this one. The exception's
+                # text may quote the line, so only its type is recorded.
                 self.counters["quarantined"] += 1
-                log.exception("processing failed for %s@%d; quarantined", parsed.source, parsed.offset)
-                quarantined.append(ParseError(f"processing error: {type(exc).__name__}: {exc}"[:500],
-                                              parsed.source, parsed.offset, parsed.raw_text[:512], parsed.raw_sha256))
+                log.error("processing failed for %s@%d (%s); quarantined", parsed.source, parsed.offset,
+                          type(exc).__name__)
+                quarantined.append(ParseError(f"processing error: {type(exc).__name__}", parsed.source,
+                                              parsed.offset, "", parsed.raw_sha256))
                 continue
             records.append(event)
             self.counters["events"] += 1
             for finding in findings:
                 self.counters["findings"] += 1
-                log.info("finding %s %s: %s", finding["severity"].upper(), finding["rule_id"], finding["title"])
+                log.info("finding %s %s", finding["severity"].upper(), finding["rule_id"])
                 records.append(finding)
         return Processed(records, quarantined)
 
@@ -85,8 +91,9 @@ def build_sinks(cfg: Config) -> list[Sink]:
         encoder = make_encoder(cfg.http.payload_format, cfg.collector.sensor_id, cfg.http.field_map)
         sinks.append(
             HttpSink(
-                cfg.http.url, encoder, token_env=cfg.http.token_env, timeout=cfg.http.timeout_seconds,
-                batch_size=cfg.http.batch_size, verify_tls=cfg.http.verify_tls, extra_headers=cfg.http.headers,
+                cfg.http.url, encoder, token_env=cfg.http.token_env, token_file=cfg.http.token_file,
+                timeout=cfg.http.timeout_seconds, batch_size=cfg.http.batch_size, verify_tls=cfg.http.verify_tls,
+                extra_headers=cfg.http.headers,
             )
         )
     return sinks
@@ -156,8 +163,8 @@ class Pipeline:
         while not self._stop.is_set():
             try:
                 read = self.step()
-            except Exception:  # keep running; state is only advanced on successful commits
-                log.exception("pipeline step failed; retrying")
+            except Exception as exc:  # keep running; state is only advanced on successful commits
+                log.error("pipeline step failed (%s); retrying", type(exc).__name__)
                 read = 0
             now = time.monotonic()
             if now - last_report > 60:

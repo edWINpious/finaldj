@@ -3,7 +3,8 @@
 Each line is treated as untrusted input. A line either becomes a ParsedEvent
 (valid JSON object with the fields every Cowrie event carries) or a
 ParseError, which the pipeline quarantines with its location. Nothing is
-dropped silently.
+dropped silently. A rejected line may hold anything, so quarantine keeps only
+its location, hash and a fixed reason, never its content.
 """
 
 from __future__ import annotations
@@ -15,7 +16,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-EXCERPT_CHARS = 512
 # Fields Cowrie always writes as strings; anything else means a corrupted/tampered line.
 _STRING_FIELDS = ("username", "password", "input", "message", "url", "dst_ip", "protocol", "sensor")
 
@@ -49,10 +49,6 @@ class ParseError:
     raw_sha256: str
 
 
-def _excerpt(data: bytes) -> str:
-    return data[:EXCERPT_CHARS].decode("utf-8", "replace")
-
-
 def parse_timestamp(value: str) -> datetime:
     dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if dt.tzinfo is None:
@@ -65,7 +61,7 @@ def parse_line(raw: RawLine) -> ParsedEvent | ParseError | None:
     digest = hashlib.sha256(raw.data).hexdigest()
 
     def fail(reason: str) -> ParseError:
-        return ParseError(reason, raw.source, raw.offset, _excerpt(raw.data), digest)
+        return ParseError(reason, raw.source, raw.offset, "", digest)
 
     if raw.oversized:
         return fail("line exceeds max_line_bytes")
@@ -92,7 +88,7 @@ def parse_line(raw: RawLine) -> ParsedEvent | ParseError | None:
     try:
         parse_timestamp(ts)
     except ValueError:
-        return fail(f"unparseable 'timestamp' {ts[:64]!r}")
+        return fail("unparseable 'timestamp'")
     session = event.get("session")
     if not isinstance(session, str) or not session:
         return fail("missing 'session'")
@@ -103,7 +99,7 @@ def parse_line(raw: RawLine) -> ParsedEvent | ParseError | None:
         try:
             ipaddress.ip_address(src_ip)
         except ValueError:
-            return fail(f"'src_ip' is not an IP address: {src_ip[:64]!r}")
+            return fail("'src_ip' is not an IP address")
     for str_field in _STRING_FIELDS:
         value = event.get(str_field)
         if value is not None and not isinstance(value, str):

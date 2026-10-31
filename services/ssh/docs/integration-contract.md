@@ -1,6 +1,6 @@
 # Integration boundary: Cowrie SSH component → shared SOC backend
 
-**Status: NOT INTEGRATED.**
+**Status: NOT INTEGRATED.** Attacker input is now cleaned before storage, so some fields below hold less than this contract first described. See [safety-and-isolation.md](safety-and-isolation.md#what-is-stored-about-attacker-input).
 
 The team's common schema and backend endpoint did not exist when this component was built. Nothing here assumes or invents the backend API.
 
@@ -77,7 +77,8 @@ This is a proposal for the team. The SSH component already emits all of these fi
 
 - `username` is only set on authentication events. Cowrie does not log the user on `command.input`, so join on `session_id`.
 - `command` is only set on command events.
-- `password` is null when `include_passwords = false`.
+- `password` is always null: tried passwords are not recorded.
+- `details.ttylog` and session recordings are absent: recording is off.
 - `outcome` is only set where Cowrie states it.
 
 ## ID stability (de-duplication)

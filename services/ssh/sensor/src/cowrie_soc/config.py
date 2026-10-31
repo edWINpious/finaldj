@@ -6,6 +6,7 @@ Environment variables (override the file; used by docker-compose):
   COWRIE_SOC_STATE_DB    SQLite state path
   COWRIE_SOC_HTTP_URL    if non-empty, enables the HTTP sink with this URL
   COWRIE_SOC_HTTP_TOKEN  bearer token for the HTTP sink (read at send time, never logged)
+  COWRIE_SOC_HTTP_TOKEN_FILE  file holding the bearer token, preferred over the variable
 """
 
 from __future__ import annotations
@@ -58,6 +59,7 @@ class HttpSinkConfig:
     enabled: bool = False
     url: str = ""
     token_env: str = "COWRIE_SOC_HTTP_TOKEN"
+    token_file: str = ""
     timeout_seconds: float = 5.0
     batch_size: int = 100
     payload_format: str = "envelope"
@@ -124,6 +126,8 @@ def load_config(path: str | Path | None = None, env: dict[str, str] | None = Non
     if env.get("COWRIE_SOC_HTTP_URL"):
         cfg.http.url = env["COWRIE_SOC_HTTP_URL"]
         cfg.http.enabled = True
+    if env.get("COWRIE_SOC_HTTP_TOKEN_FILE"):
+        cfg.http.token_file = env["COWRIE_SOC_HTTP_TOKEN_FILE"]
 
     _validate(cfg)
     return cfg

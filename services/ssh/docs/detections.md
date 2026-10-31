@@ -19,7 +19,7 @@ Time comes from event timestamps, so replaying a log gives the same findings as 
 
 | Rule ID | Config key | Fires when | Default severity | ATT&CK |
 |---|---|---|---|---|
-| SSH-BRUTE-001 | `ssh_bruteforce` | ≥ `threshold` (5) failed logins from one source IP within `window_seconds` (60). One finding per episode; an episode ends after a failure-free gap longer than the window | medium | T1110.001, or T1110.003 when ≥ `spray_min_usernames` (3) accounts but ≤ `spray_max_passwords` (2) passwords |
+| SSH-BRUTE-001 | `ssh_bruteforce` | ≥ `threshold` (5) failed logins from one source IP within `window_seconds` (60). One finding per episode; an episode ends after a failure-free gap longer than the window | medium | T1110, because tried passwords are not recorded |
 | SSH-AUTH-002 | `ssh_decoy_login` | Any successful login to the decoy (the decoy has no legitimate users). Escalated when ≥ `min_prior_failures` (3) failures came from that IP within `lookback_seconds` (600) | medium → high (escalated) | T1078; escalated adds T1110.001 |
 | SSH-EXEC-001 | `ssh_shell_activity` | First command in a session | low | T1059.004 |
 | SSH-DISC-001 | `ssh_discovery` | A session uses N distinct discovery techniques within `window_seconds` (300). `levels = [[3,"medium"],[5,"high"]]` emits once per level | medium / high | Only the techniques actually observed: T1082, T1033, T1087.001, T1083, T1016, T1049, T1057 |
@@ -53,7 +53,7 @@ Each `shell_command` event also gets per-command ATT&CK tags in `attack[]`, with
 | T1222.002 Linux File Permissions Modification | `chmod +x`, `chmod 7xx` (any execute bit) |
 | T1059.004 Unix Shell | command execution in the emulated shell |
 | T1070.003 Clear Command History | see SSH-EVADE-001 |
-| T1110 / T1110.001 / T1110.003 Brute Force | authentication failures (SSH-BRUTE-001). T1110 is the parent technique, listed for completeness; the rule always reports the specific sub-technique |
+| T1110 / T1110.001 / T1110.003 Brute Force | authentication failures (SSH-BRUTE-001). Tried passwords are not recorded, so the rule reports the parent technique T1110. The sub-techniques need password counts and apply only if capture is enabled |
 | T1078 Valid Accounts | successful login to a **decoy** account; no production account is ever involved |
 
 ## Honeytokens and path resolution
@@ -70,7 +70,7 @@ If the collector never saw the login (for example, it started mid-session), the 
 `cowrie-soc replay collector/tests/fixtures/real_capture_2026-10-31.json --config collector/config/collector.toml --summary` produces 14 findings from the 104 events captured from the live container. That run covered the paramiko scenarios plus one OpenSSH exec session:
 
 ```
-MEDIUM   SSH-BRUTE-001  SSH brute force from 172.18.0.3: 5 failed logins in 6s  [T1110.001]
+MEDIUM   SSH-BRUTE-001  SSH brute force from 172.18.0.3: 5 failed logins in 6s  [T1110]
 HIGH     SSH-AUTH-002   Decoy SSH login as 'backup' from 172.18.0.3 after 8 failed attempts  [T1110.001,T1078]
 MEDIUM   SSH-DISC-001   Discovery burst: 3 ATT&CK discovery techniques in session 03394a5fdc06  [T1033,T1082,T1087.001]
 HIGH     SSH-DISC-001   Discovery burst: 5 ATT&CK discovery techniques ...  [T1016,T1033,T1049,T1082,T1087.001]
@@ -92,7 +92,7 @@ The `benign` scenario (`date`, `uptime`, `df -h`) produces only a decoy-login fi
   - base64-encoded commands
   - commands nested inside `sh -c '...'` or `bash -c`, which are not analyzed
   - `curl ... | sh` (download is detected, the pipe-to-shell sequence is not)
-- **Redacted passwords.** With `include_passwords = false`, SSH-BRUTE-001 reports the parent technique T1110, because guessing and spraying can't be told apart without passwords.
+- **No passwords.** `include_passwords = false` is the project setting, so SSH-BRUTE-001 reports the parent technique T1110: guessing and spraying can't be told apart without passwords.
 - **Copy destinations.** For `cp` and `scp`, the last operand is treated as a destination, not a read. So `cp .env.example .env` is not a credential access.
 - **Commands that fail in Cowrie still count.** For example, `ip addr` printed "command not found" in the emulated shell but still counts as T1016 intent. The event's `shell_command_not_found` companion shows the result.
 - **Correlation keys.** Brute force is correlated by source IP only. Behind NAT, several actors look like one. Each TCP connection is a separate Cowrie session, so `session_ids` lists them all.

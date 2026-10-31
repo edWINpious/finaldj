@@ -4,7 +4,7 @@
 |---|---|
 | Cowrie log says `No operator config file found; using bundled defaults only` | `/etc/cowrie` is not readable. Rebuild the image (`docker compose build cowrie`). The Dockerfile sets the directory to 0555 and the files to 0444. This happened during development when `COPY --chmod=0444` also stripped the directory's execute bit |
 | `ssh: connect ... Connection refused` | Check `docker compose ps` and `docker compose logs cowrie` for `Ready to accept SSH connections`. Make sure you are using `COWRIE_SSH_PORT` and `COWRIE_BIND_ADDR`; the default is 127.0.0.1, which is unreachable from other laptops |
-| Host key warning after rebuild | Expected: host keys live in the `cowrie-state` volume and change after `down -v`. Use `-o UserKnownHostsFile=/dev/null` for lab SSH |
+| Host key warning after rebuild | Expected: host keys live in the `cowrie-state` volume and change if that volume is replaced. Use `-o UserKnownHostsFile=/dev/null` for lab SSH |
 | `source_ip` is `172.x.0.1` / `192.168.65.x` | Docker Desktop is hiding the client IP. See [deployment.md](deployment.md#requirements) |
 | Collector logs `sink http: cannot reach ... (retry N in Xs, P pending)` | The backend is down or the URL is wrong. Records are retained and retried. Fix the URL in `.env` and run `docker compose up -d collector` |
 | Collector logs `backpressure: ... pausing ingestion` | Undelivered records reached `max_pending_records`. Ingestion resumes automatically once the sink recovers; Cowrie's own log still holds everything |

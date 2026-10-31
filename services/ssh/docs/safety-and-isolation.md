@@ -28,6 +28,39 @@ Checks were run on 2026-10-31 on the dev machine (Windows 11, Docker Desktop 29.
 | No automatic response or blocking | collector | Findings contain advisory `recommended_action` text only |
 | Demo traffic generator is bounded | `demo-attacker/scenarios.py` | Target allow-list (`cowrie`, `localhost`, `127.0.0.1` by default), fixed command lists, at most 12 auth attempts. Downloads use TEST-NET-1 (192.0.2.0/24), which is never routed |
 
+## What is stored about attacker input
+
+Project rule: attacker input is not recorded unless it is needed. Cowrie is patched at build time (`cowrie/harden_cowrie.py`) so that every event passes through `soc_redact.py` before anything is written, and the sensor repeats the same cleaning before it stores anything. Each event type has a list of allowed fields. Everything else is dropped, and an unknown event type keeps only its metadata. If cleaning fails, the event is cut down to metadata.
+
+| Input | What is kept |
+|---|---|
+| Login passwords | Nothing. They are removed from Cowrie's own login events |
+| Usernames | Common account names (`root`, `backup`, ...) as typed. Anything else becomes `user_<8 hex>`, keyed by a value held in memory and new at each start |
+| Commands | Programs the detection rules use keep their arguments, with known secret patterns and random-looking values removed. Any other program keeps only its name and flag names |
+| Input typed into a running program (`passwd`, `su`, `ssh` prompts, `cat`, `tee`) | Nothing. Replaced with `__REDACTED__` |
+| Environment variables | Name only, except `LANG`, `LC_*` and `TERM` |
+| Piped input and redirected output | In memory only, lost on restart. Content and hash are not logged |
+| Uploads | Content in memory only, lost on restart. The SHA-256 is logged. The file name becomes `file_<8 hex>` |
+| Keystroke recordings | Off (`ttylog = false`) |
+| Docker logs | No log is stored for the decoy (`driver: none`). Its console prints only level and module |
+| Sensor quarantine | Offset, SHA-256 and a fixed reason. No line content |
+| Sensor diagnostics | No exception text and no collector response bodies |
+
+Verified live with `tests/live/run_marker_test.py`, which reports counts only.
+
+**This does not find every secret. Limits:**
+
+- An ordinary word passed to an allowed program looks like a filename and is kept, for example `cat maple7`.
+- A URL path can hold a secret. Only credentials and known query keys are removed from URLs.
+- The SHA-256 of an upload is kept, so very short or guessable content could be confirmed by guessing.
+- Uploaded files are gone after a restart, so samples cannot be analysed later.
+- There is no session replay, and `docker logs ssh-honeypot` shows nothing. Use the container status and `cowrie.json` to debug.
+- `user_<8 hex>` values change on restart, so usernames cannot be matched across restarts.
+- A compromised Cowrie can still write fake log lines and can read what it receives in memory.
+- Log files written before this change, and Stage 2 test sessions in the `tty/` folder, were kept and were not rewritten.
+
+The log directory is writable by Cowrie, so the sensor treats it as hostile. It reads only regular files directly inside it, opens each with `O_NOFOLLOW` relative to a held directory handle, checks the type on that open handle, and uses the same handle for every read. Symlinks, FIFOs, sockets, devices, directories and hard links are rejected. `tests/live/linux_tailer_check.py` runs these attacks in the real sensor image.
+
 ## Residual risks and required mitigations
 
 1. **Container egress is open at the Docker level.**
@@ -56,5 +89,5 @@ Checks were run on 2026-10-31 on the dev machine (Windows 11, Docker Desktop 29.
    - Never bind to `0.0.0.0` on a laptop that is also on another network (campus Wi-Fi, for example).
    - Allow only the lab subnet with a host firewall.
 4. **Decoy fidelity.** Cowrie's emulation is detectable by a skilled attacker. For example, the `backup` user can read `/etc/shadow`, and `ip` is "not found". That is acceptable for a lab demo.
-5. **Passwords tried are recorded.** Attackers sometimes try real passwords from other systems. In this lab all traffic is authorized and synthetic. For any other use, set `include_passwords = false` in `collector.toml`.
-6. **Upstream image anonymous volumes.** The upstream Cowrie image declares `VOLUME`s for `etc` and `var`, so Docker creates anonymous volumes for them. They hold only Cowrie runtime state, but clean them up with `docker compose down -v` after demos.
+5. **Passwords tried are not recorded,** because attackers sometimes try real passwords from other systems. See "What is stored about attacker input" for what is kept and for the limits.
+6. **Upstream image anonymous volumes.** The upstream Cowrie image declares `VOLUME`s for `etc` and `var`, so Docker creates anonymous volumes for them. They hold only Cowrie runtime state. Leave them in place: `down -v` can delete shared data.

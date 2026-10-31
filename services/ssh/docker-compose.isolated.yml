@@ -5,6 +5,10 @@
 # ssh_isolated_net has no route out and no path to soc-lab. No port is published.
 # ssh-sensor has no network at all: it only reads Cowrie's log volume, so nothing can reach
 # the shared collector. Never add a collector URL or token here.
+#
+# Nothing typed by an attacker is kept outside cowrie.json, which is cleaned first:
+# piped input, redirects and uploads stay in memory (downloads is tmpfs and is lost on
+# restart), and Docker stores no log for the decoy.
 name: soc-ssh-isolated
 
 services:
@@ -21,6 +25,9 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=16m,mode=1777
+      - /cowrie/cowrie-git/var/lib/cowrie/downloads:size=16m,mode=0700,uid=999,gid=999,noexec,nosuid,nodev
+    logging:
+      driver: none
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
@@ -48,6 +55,11 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=16m
+    logging:
+      driver: local
+      options:
+        max-size: 5m
+        max-file: "2"
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true

@@ -1,6 +1,8 @@
 # PS04: Cowrie SSH honeypot component
 
-This repo is the SSH decoy part of **PS 04: Deception-Driven Threat Detection and Response**.
+This is the SSH decoy part of **PS 04: Deception-Driven Threat Detection and Response**.
+
+> **Integrated use:** this component now lives in `services/ssh` and runs from `docker-compose.isolated.yml` (project `soc-ssh-isolated`), on its own internal network with no published port. It is not connected to the shared SOC yet. Sensor identity is `ssh-01`. Tried passwords are not recorded. Commands below that use `docker compose ... collector`, `dev-receiver` or `127.0.0.1:2222` describe the original standalone project. See [docs/safety-and-isolation.md](docs/safety-and-isolation.md#what-is-stored-about-attacker-input).
 
 It contains three pieces:
 

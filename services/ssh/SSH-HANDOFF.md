@@ -2,6 +2,8 @@
 
 Owner component: the **Cowrie SSH decoy plus its collector**.
 
+> **Integrated use:** this component now lives in `services/ssh` and runs from `docker-compose.isolated.yml` (project `soc-ssh-isolated`), on its own internal network with no published port. It is not connected to the shared SOC yet. Sensor identity is `ssh-01`. Tried passwords are not recorded. Commands below that use `docker compose ... collector`, `dev-receiver` or `127.0.0.1:2222` describe the original standalone project. See [docs/safety-and-isolation.md](docs/safety-and-isolation.md#what-is-stored-about-attacker-input).
+
 The Web and DB honeypots, the shared SOC backend, the dashboard, the Demo Attacker module and cross-honeypot correlation are **not** part of this component. **Nothing is integrated** with a shared backend yet.
 
 Last reviewed: 2026-11-01, on Windows 11 with Docker Desktop 29.8. Each item below says whether it was checked live, with fixtures or synthetic tests, or not at all.
@@ -74,7 +76,7 @@ Field details that matter for integration:
 - **Null handling.** Fields Cowrie doesn't provide are `null`:
   - `username` is only on authentication events, so join on `session_id` for commands.
   - `command` is only on command events.
-  - `password` is null when redacted.
+  - `password` is always null: tried passwords are not recorded.
   - `outcome` is only set where Cowrie states it.
   - One exception: `protocol` defaults to `"ssh"` if a line lacks it. Every observed Cowrie line had it.
 - **`source_ip`** is the address Cowrie saw. On Docker Desktop it is the bridge gateway (e.g. `172.19.0.1`), not the attacker.
@@ -86,7 +88,7 @@ There are 8 rule-based, configurable rules, run in the collector ([docs/detectio
 
 | Rule | Fires on | Default severity | ATT&CK |
 |---|---|---|---|
-| SSH-BRUTE-001 | ≥5 failed logins from one source IP in 60 s (one finding per episode) | medium | T1110.001; T1110.003 if ≥3 users with ≤2 passwords; T1110 if passwords are redacted |
+| SSH-BRUTE-001 | ≥5 failed logins from one source IP in 60 s (one finding per episode) | medium | T1110, because tried passwords are not recorded |
 | SSH-AUTH-002 | Any login to the decoy; escalated if ≥3 failures from that IP in 600 s | medium → high | T1078; escalated adds T1110.001 |
 | SSH-EXEC-001 | First command in a session | low | T1059.004 |
 | SSH-DISC-001 | ≥3 (medium) / ≥5 (high) distinct discovery techniques in one session within 300 s | medium / high | The observed subset of T1082, T1033, T1087.001, T1083, T1016, T1049, T1057 |
