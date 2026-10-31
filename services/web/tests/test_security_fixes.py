@@ -222,3 +222,35 @@ def test_max_size_upload_never_rolls_to_disk(client, settings, monkeypatch):
     r = client.post("/upload", files={"document": ("max.bin", b"A" * settings.max_upload_bytes,
                                                     "application/octet-stream")})
     assert r.status_code == 200 and rolled == []
+
+
+# ---- P13: forged X-Forwarded-For through the REAL server --------------------------
+
+def test_real_server_ignores_forwarded_for(tmp_path, monkeypatch):
+    """TestClient bypasses uvicorn, so this runs the actual hardened server config.
+    Plain `uvicorn web_decoy.app:app` would log 8.8.8.8 here (it trusts XFF from 127.0.0.1)."""
+    log = tmp_path / "ev.jsonl"
+    monkeypatch.setenv("EVENT_LOG_PATH", str(log))
+    monkeypatch.setenv("SPOOL_PATH", str(tmp_path / "sp.jsonl"))
+    monkeypatch.setenv("COLLECTOR_URL", "")
+    server = uvicorn.Server(serve.build_config(host="127.0.0.1", port=0, log_level="error"))
+    server.install_signal_handlers = lambda: None
+    t = threading.Thread(target=server.run, daemon=True)
+    t.start()
+    try:
+        for _ in range(100):
+            if server.started:
+                break
+            time.sleep(0.05)
+        port = server.servers[0].sockets[0].getsockname()[1]
+        s = socket.create_connection(("127.0.0.1", port))
+        s.sendall(b"GET /admin HTTP/1.1\r\nHost: x\r\nX-Forwarded-For: 8.8.8.8\r\nConnection: close\r\n\r\n")
+        s.settimeout(5)
+        s.recv(100)
+        s.close()
+        time.sleep(0.2)
+        event = json.loads(log.read_text().splitlines()[-1])
+        assert event["source_ip"] == "127.0.0.1"
+    finally:
+        server.should_exit = True
+        t.join(5)

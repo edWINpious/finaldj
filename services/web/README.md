@@ -30,11 +30,13 @@ docker compose -f docker-compose.web.yml -f docker-compose.web.browse.yml down
 
 Synthetic login: `j.miller` / `Halden#Spring26`.
 
-**Without Docker** (development; from `services/web`, with the venv active):
+**Without Docker** (development; from `services/web`, with the venv active). PowerShell:
 ```bash
-uvicorn web_decoy.app:app --host 127.0.0.1 --port 8081
+$env:WEB_DECOY_HOST="127.0.0.1"; $env:WEB_DECOY_PORT="8081"; python -m web_decoy.serve
 ```
-The container instead runs `python -m web_decoy.serve`, which adds the slow-header deadline (security fix F1).
+Always use `python -m web_decoy.serve`, as the container does. **Plain `uvicorn web_decoy.app:app` is unsafe
+for testing:** it trusts a forged `X-Forwarded-For` from localhost and logs the fake IP (PLAN P13), and it lacks
+the slow-header deadline (F1).
 
 ## Containment proof
 

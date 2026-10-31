@@ -1,6 +1,12 @@
 """Production entrypoint: uvicorn with a header-completion deadline (security fix F1).
 
-    python -m web_decoy.serve
+    python -m web_decoy.serve                      (container: 0.0.0.0:8080)
+    WEB_DECOY_HOST=127.0.0.1 WEB_DECOY_PORT=8081 python -m web_decoy.serve   (local)
+
+ALWAYS start the decoy this way, locally too. Plain `uvicorn web_decoy.app:app`
+trusts X-Forwarded-For from 127.0.0.1 by default and rewrites the client IP
+before the app sees it, so a faked header would be logged as the source IP
+(PLAN P13).
 
 Why not plain `uvicorn ...`: uvicorn has no deadline for receiving request headers.
 Its keep-alive timer is cancelled on every received byte, so a client trickling
@@ -56,18 +62,26 @@ class HeaderDeadlineH11Protocol(H11Protocol):
             self.transport.close()
 
 
-def main() -> None:
-    uvicorn.run(
-        "web_decoy.app:app",
-        host=os.environ.get("WEB_DECOY_HOST", "0.0.0.0"),
-        port=int(os.environ.get("WEB_DECOY_PORT", "8080")),
+def build_config(host: str | None = None, port: int | None = None, **overrides) -> uvicorn.Config:
+    """The one hardened server configuration (also used by the tests)."""
+    options = dict(
+        app="web_decoy.app:create_app",
+        factory=True,               # settings read from env at start, not at import
+        host=host or os.environ.get("WEB_DECOY_HOST", "0.0.0.0"),
+        port=int(os.environ.get("WEB_DECOY_PORT", "8080")) if port is None else port,
         http=HeaderDeadlineH11Protocol,
-        proxy_headers=False,        # never trust X-Forwarded-For (PLAN P2)
+        proxy_headers=False,        # never trust X-Forwarded-For (PLAN P2, P13)
         server_header=False,        # app sets "Server: nginx"
         access_log=False,           # uvicorn's log would hold unredacted query strings
         limit_concurrency=200,
         timeout_keep_alive=5,
     )
+    options.update(overrides)
+    return uvicorn.Config(**options)
+
+
+def main() -> None:
+    uvicorn.Server(build_config()).run()
 
 
 if __name__ == "__main__":

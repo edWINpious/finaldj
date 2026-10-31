@@ -46,11 +46,13 @@ docker compose -f docker-compose.web.yml exec web-decoy tail -n 30 /data/web-eve
 
 ## B. Solo rehearsal (no simulator, no dashboard)
 
-Run without Docker so you can send requests from this machine. Do this in `services/web`, with the venv active:
+Run without Docker so you can send requests from this machine. Do this in `services/web`, with the venv active.
+**Use `python -m web_decoy.serve`, not plain `uvicorn`:** plain uvicorn trusts a forged
+`X-Forwarded-For` from localhost (PLAN P13) and has no slow-header deadline.
 
 ```bash
-$env:COLLECTOR_URL=""
-uvicorn web_decoy.app:app --host 127.0.0.1 --port 8081
+$env:COLLECTOR_URL=""; $env:WEB_DECOY_HOST="127.0.0.1"; $env:WEB_DECOY_PORT="8081"
+python -m web_decoy.serve
 ```
 
 In a second window (also in `services/web`):
@@ -71,7 +73,7 @@ Brute force, then the decoy credential:
 
 After login: IDOR, SQLi, XSS, traversal, SSRF, disguised upload, webshell probe:
 ```bash
-curl.exe -s -o NUL -b jar.txt http://127.0.0.1:8081/api/v1/users/1002; curl.exe -s -o NUL "http://127.0.0.1:8081/search?q=%27%20UNION%20SELECT%20password%20FROM%20users--"; curl.exe -s -o NUL "http://127.0.0.1:8081/search?q=%3Cscript%3Ealert(1)%3C/script%3E"; curl.exe -s -o NUL "http://127.0.0.1:8081/download?file=../../etc/passwd"; curl.exe -s -o NUL "http://127.0.0.1:8081/api/v1/preview?url=http://169.254.169.254/"; Set-Content -NoNewline avatar.jpg "<?php system(1); ?>"; curl.exe -s -o NUL -b jar.txt -F "document=@avatar.jpg;type=image/jpeg" http://127.0.0.1:8081/upload; curl.exe -s -o NUL http://127.0.0.1:8081/wp-content/uploads/shell.php
+curl.exe -s -o NUL -b jar.txt http://127.0.0.1:8081/api/v1/users/1002; curl.exe -s -o NUL "http://127.0.0.1:8081/search?q=%27%20UNION%20SELECT%20password%20FROM%20users--"; curl.exe -s -o NUL "http://127.0.0.1:8081/search?q=%3Cscript%3Ealert(1)%3C/script%3E"; curl.exe -s -o NUL "http://127.0.0.1:8081/download?file=../../etc/passwd"; curl.exe -s -o NUL "http://127.0.0.1:8081/api/v1/preview?url=http://169.254.169.254/"; [IO.File]::WriteAllText("$PWD\avatar.jpg", "<?php system(1); ?>"); curl.exe -s -o NUL -b jar.txt -F "document=@avatar.jpg;type=image/jpeg" http://127.0.0.1:8081/upload; curl.exe -s -o NUL http://127.0.0.1:8081/wp-content/uploads/shell.php
 ```
 
 Rules view:
