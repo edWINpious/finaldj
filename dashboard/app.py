@@ -48,6 +48,9 @@ def event_rows(events: list[dict[str, Any]]) -> pd.DataFrame:
 def overview() -> None:
     health, sensors, alerts, events = get("/health"), get("/api/sensors"), get("/api/alerts"), get("/api/events", limit=15)
     attackers = get("/api/attackers")
+    if health.get("read_capped_at"):
+        st.warning("Some lists and summaries may be incomplete: stored events are too large to load in one read. "
+                   f"Last happened at {health['read_capped_at']}. Nothing was deleted.")
     a, b, c, d = st.columns(4)
     a.metric("Events stored", health["events_stored"])
     b.metric("Open alerts", sum(x["status"] == "open" for x in alerts))

@@ -14,13 +14,14 @@ from fastapi import Body, FastAPI, HTTPException, Query
 from pydantic import TypeAdapter, ValidationError
 
 from .detections import process_event
+from .guards import BodyGuard
 from .schema import AdaptationRecord, CanonicalEvent, Heartbeat
 from .storage import Store
 
 MAX_BATCH = 50
 SENSOR_STALE_S = 45
 
-app = FastAPI(title="SOC Collector", docs_url=None, redoc_url=None, openapi_url=None)
+api = FastAPI(title="SOC Collector", docs_url=None, redoc_url=None, openapi_url=None)
 store = Store(os.environ.get("COLLECTOR_DB_PATH", "data/collector.db"))
 _events = TypeAdapter(list[CanonicalEvent])
 _adaptations = TypeAdapter(list[AdaptationRecord])
@@ -37,7 +38,7 @@ def _as_list(body: Any) -> list[Any]:
     return items
 
 
-@app.post("/api/events")
+@api.post("/api/events")
 def ingest_events(body: Any = Body(...)) -> dict[str, int]:
     try:
         events = _events.validate_python(_as_list(body))
@@ -52,7 +53,7 @@ def ingest_events(body: Any = Body(...)) -> dict[str, int]:
     return {"received": len(events), "stored": stored, "duplicates": len(events) - stored}
 
 
-@app.post("/api/adaptations")
+@api.post("/api/adaptations")
 def ingest_adaptations(body: Any = Body(...)) -> dict[str, int]:
     try:
         records = _adaptations.validate_python(_as_list(body))
@@ -61,19 +62,19 @@ def ingest_adaptations(body: Any = Body(...)) -> dict[str, int]:
     return {"stored": sum(store.put_adaptation(r.model_dump(mode="json")) for r in records)}
 
 
-@app.post("/api/sensors/heartbeat")
+@api.post("/api/sensors/heartbeat")
 def sensor_heartbeat(beat: Heartbeat) -> dict[str, str]:
     store.put_sensor(beat.sensor_id, _now(), {**beat.model_dump(mode="json"), "last_seen": _now()})
     return {"status": "ok"}
 
 
-@app.get("/api/events")
+@api.get("/api/events")
 def list_events(limit: int = Query(100, ge=1, le=1000), offset: int = Query(0, ge=0), service: str | None = None,
                 source_ip: str | None = None, session_id: str | None = None) -> list[dict[str, Any]]:
     return store.events(limit, offset, service, source_ip, session_id)
 
 
-@app.get("/api/alerts")
+@api.get("/api/alerts")
 def list_alerts(limit: int = Query(200, ge=1, le=1000)) -> list[dict[str, Any]]:
     order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
     return sorted(store.alerts(limit), key=lambda a: order.get(a["severity"], 9))
@@ -92,7 +93,7 @@ def _profile(source_ip: str, events: list[dict[str, Any]], alerts: list[dict[str
     }
 
 
-@app.get("/api/attackers")
+@api.get("/api/attackers")
 def list_attackers() -> list[dict[str, Any]]:
     grouped: dict[str, list[dict[str, Any]]] = {}
     for event in store.events(5000):
@@ -101,7 +102,7 @@ def list_attackers() -> list[dict[str, Any]]:
     return [_profile(ip, evs, [a for a in alerts if a["source_ip"] == ip]) for ip, evs in grouped.items()]
 
 
-@app.get("/api/attackers/{source_ip}")
+@api.get("/api/attackers/{source_ip}")
 def attacker_detail(source_ip: str) -> dict[str, Any]:
     events = store.events(1000, source_ip=source_ip)
     if not events:
@@ -110,7 +111,7 @@ def attacker_detail(source_ip: str) -> dict[str, Any]:
     return {**_profile(source_ip, events, alerts), "alerts": alerts, "timeline": list(reversed(events))}
 
 
-@app.get("/api/adaptations")
+@api.get("/api/adaptations")
 def list_adaptations(limit: int = Query(200, ge=1, le=1000)) -> list[dict[str, Any]]:
     """Follow-ups come from genuine service events: a successful read of the asset. Only a
     successful read counts, since that is impossible before the grant."""
@@ -124,7 +125,7 @@ def list_adaptations(limit: int = Query(200, ge=1, le=1000)) -> list[dict[str, A
     return out
 
 
-@app.get("/api/database/summary")
+@api.get("/api/database/summary")
 def database_summary() -> dict[str, Any]:
     events = store.events(5000, service="database")
     queries = [e for e in events if e["event_type"] == "sql_query"]
@@ -149,7 +150,7 @@ def database_summary() -> dict[str, Any]:
     }
 
 
-@app.get("/api/sensors")
+@api.get("/api/sensors")
 def list_sensors() -> list[dict[str, Any]]:
     now = datetime.now(timezone.utc)
     out = []
@@ -160,7 +161,10 @@ def list_sensors() -> list[dict[str, Any]]:
     return out
 
 
-@app.get("/health")
+@api.get("/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "events_stored": store.count_events(),
+    return {"status": "ok", "events_stored": store.count_events(), "read_capped_at": store.read_capped_at,
             "sensors": {s["sensor_id"]: ("stale" if s["stale"] else s["status"]) for s in list_sensors()}}
+
+
+app = BodyGuard(api)

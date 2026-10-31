@@ -13,4 +13,4 @@ COPY collector ./collector
 
 USER 10002:10002
 EXPOSE 8000
-CMD ["uvicorn", "collector.app:app", "--host", "0.0.0.0", "--port", "8000", "--no-server-header", "--no-access-log"]
+CMD ["uvicorn", "collector.app:app", "--host", "0.0.0.0", "--port", "8000", "--http", "h11", "--no-server-header", "--no-access-log"]

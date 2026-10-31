@@ -5,8 +5,14 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+# One read loads at most this much stored text, newest first. Rows stay stored, but a result may be
+# incomplete. Unauthenticated senders can store large rows, and without this a dashboard read of
+# them can exhaust memory again after every restart.
+MAX_READ_BYTES = 64 << 20
 
 
 class Store:
@@ -14,6 +20,7 @@ class Store:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path, check_same_thread=False)
         self.lock = threading.Lock()
+        self.read_capped_at: str | None = None
         self.db.executescript("""
             PRAGMA journal_mode=WAL;
             CREATE TABLE IF NOT EXISTS events (
@@ -28,6 +35,22 @@ class Store:
             CREATE TABLE IF NOT EXISTS sensors (
                 sensor_id TEXT PRIMARY KEY, last_seen TEXT NOT NULL, doc TEXT NOT NULL);
         """)
+
+    def _read(self, sql: str, args: tuple[Any, ...]) -> list[dict[str, Any]]:
+        docs: list[str] = []
+        total = 0
+        with self.lock:
+            cursor = self.db.execute(sql, args)
+            try:
+                for (doc,) in cursor:
+                    total += len(doc)
+                    if docs and total > MAX_READ_BYTES:
+                        self.read_capped_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                        break
+                    docs.append(doc)
+            finally:
+                cursor.close()
+        return [json.loads(doc) for doc in docs]
 
     def insert_event(self, event: dict[str, Any]) -> bool:
         """False when event_id was already stored: resends are expected (INTEGRATOR_NOTES §1)."""
@@ -46,10 +69,8 @@ class Store:
                 where.append(f"{col} = ?")
                 args.append(val)
         clause = f"WHERE {' AND '.join(where)}" if where else ""
-        with self.lock:
-            rows = self.db.execute(f"SELECT doc FROM events {clause} ORDER BY ts DESC, rowid DESC LIMIT ? OFFSET ?",
-                                   (*args, limit, offset)).fetchall()
-        return [json.loads(r[0]) for r in rows]
+        return self._read(f"SELECT doc FROM events {clause} ORDER BY ts DESC, rowid DESC LIMIT ? OFFSET ?",
+                          (*args, limit, offset))
 
     def count_events(self) -> int:
         with self.lock:
@@ -72,9 +93,7 @@ class Store:
                             (key, alert["alert_id"], alert["last_seen"], json.dumps(alert)))
 
     def alerts(self, limit: int) -> list[dict[str, Any]]:
-        with self.lock:
-            rows = self.db.execute("SELECT doc FROM alerts ORDER BY last_seen DESC LIMIT ?", (limit,)).fetchall()
-        return [json.loads(r[0]) for r in rows]
+        return self._read("SELECT doc FROM alerts ORDER BY last_seen DESC LIMIT ?", (limit,))
 
     def put_adaptation(self, record: dict[str, Any]) -> bool:
         with self.lock, self.db:
@@ -83,15 +102,11 @@ class Store:
         return cur.rowcount == 1
 
     def adaptations(self, limit: int) -> list[dict[str, Any]]:
-        with self.lock:
-            rows = self.db.execute("SELECT doc FROM adaptations ORDER BY ts DESC LIMIT ?", (limit,)).fetchall()
-        return [json.loads(r[0]) for r in rows]
+        return self._read("SELECT doc FROM adaptations ORDER BY ts DESC LIMIT ?", (limit,))
 
     def put_sensor(self, sensor_id: str, last_seen: str, doc: dict[str, Any]) -> None:
         with self.lock, self.db:
             self.db.execute("INSERT OR REPLACE INTO sensors VALUES (?, ?, ?)", (sensor_id, last_seen, json.dumps(doc)))
 
     def sensors(self) -> list[dict[str, Any]]:
-        with self.lock:
-            rows = self.db.execute("SELECT doc FROM sensors ORDER BY sensor_id").fetchall()
-        return [json.loads(r[0]) for r in rows]
+        return self._read("SELECT doc FROM sensors ORDER BY sensor_id", ())
