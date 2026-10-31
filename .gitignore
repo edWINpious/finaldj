@@ -1,4 +1,6 @@
 .env
+# Synthetic honeytoken baked into the SSH decoy image. Not a real credential.
+!services/ssh/cowrie/decoy-fs/var/backups/app/.env
 __pycache__/
 *.pyc
 .pytest_cache/
