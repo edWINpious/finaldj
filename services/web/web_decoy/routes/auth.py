@@ -1,0 +1,76 @@
+"""Synthetic login. One decoy credential; everything else fails with a generic message."""
+
+from __future__ import annotations
+
+import hmac
+
+from fastapi import APIRouter, Request
+from fastapi.responses import RedirectResponse
+
+from .. import fixtures
+from ..deps import current_session, templates
+from ..sessions import COOKIE_NAME
+
+router = APIRouter()
+
+GENERIC_ERROR = "Invalid username or password."
+MAX_FIELD = 256
+
+
+def _form_str(form, name: str) -> str:
+    value = form.get(name, "")
+    return value[:MAX_FIELD] if isinstance(value, str) else ""
+
+
+def _check(settings, username: str, password: str) -> bool:
+    # Compare both fields in constant time and always evaluate both, so timing
+    # does not reveal whether the username exists.
+    user_ok = hmac.compare_digest(username.encode(), settings.decoy_user.encode())
+    pass_ok = hmac.compare_digest(password.encode(), settings.decoy_password.encode())
+    return user_ok and pass_ok
+
+
+@router.get("/login")
+def login_page(request: Request):
+    return templates.TemplateResponse(request, "login.html", {"realm": "partner", "error": None})
+
+
+@router.get("/admin/login")
+def admin_login_page(request: Request):
+    return templates.TemplateResponse(request, "login.html", {"realm": "admin", "error": None})
+
+
+@router.get("/admin")
+@router.get("/admin/")
+def admin(request: Request):
+    return RedirectResponse("/admin/login", status_code=302)
+
+
+@router.post("/login")
+async def login_submit(request: Request):
+    form = await request.form()
+    username = _form_str(form, "username")
+    password = _form_str(form, "password")
+    realm = "admin" if _form_str(form, "realm") == "admin" else "partner"
+    settings = request.app.state.settings
+
+    if not _check(settings, username, password):
+        return templates.TemplateResponse(
+            request, "login.html", {"realm": realm, "error": GENERIC_ERROR}, status_code=401
+        )
+
+    user = fixtures.USER_BY_NAME.get(settings.decoy_user, fixtures.USERS[1001])
+    token, _ = request.app.state.sessions.create(user["id"], user["username"])
+    resp = RedirectResponse("/portal", status_code=302)
+    # No Secure flag: the lab runs plain HTTP on localhost (documented limitation).
+    resp.set_cookie(COOKIE_NAME, token, httponly=True, samesite="lax", path="/", max_age=8 * 3600)
+    return resp
+
+
+@router.post("/logout")
+def logout(request: Request):
+    if current_session(request) is not None:
+        request.app.state.sessions.delete(request.cookies.get(COOKIE_NAME))
+    resp = RedirectResponse("/", status_code=302)
+    resp.delete_cookie(COOKIE_NAME, path="/")
+    return resp

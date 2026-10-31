@@ -33,7 +33,8 @@ uses a read-only copy of it and never changes it on its own.
 | P5 | Redacting the password before detection would hide SQLi in the password field | Detection runs on the in-memory value first, then redaction; only rule + field name are stored (§4.1) | Web (here) |
 | P6 | The schema has no field for detection results | Agreed: `raw_evidence_redacted.detections[]` + `tags`, with a fixed sub-shape documented in `docs/INTEGRATOR_NOTES.md` §2 | Web + integrator |
 | P7 | Dev Python (3.13) ≠ spec (3.12) | Use `python3.12` locally and the pinned 3.12 image for evidence runs | Web (here) |
-| P8 | A detailed `/health` on the attacker-facing port shows it's a honeypot (new conflict from decision Q5) | Detailed JSON only for sources in `HEALTH_ALLOWED_CIDRS` (lab network + loopback). Everyone else gets the site's normal 404 (§3.1, §6) | Web (here) |
+| P8 | A detailed `/health` on the attacker-facing port shows it's a honeypot (new conflict from decision Q5) | Detailed JSON only for sources in `HEALTH_ALLOWED_CIDRS`. Everyone else gets the site's normal 404 (§3.1, §6) | Web (here) |
+| P9 | *(found in Phase 2 container test)* Requests through the published port reach the app from the Docker gateway `172.28.0.1`. A `/16` allowlist therefore trusted every host-side request, and every host-run attack shares one source IP | Allowlists default to single `/32`s (health: `127.0.0.1/32`; simulator: `172.28.0.50/32`). **The simulator must run as a container on `lab_net` with its own fixed IP**, or attacker profiles collapse onto one IP. Written up in `docs/INTEGRATOR_NOTES.md` §4 | Web + integrator + simulator owner |
 
 ---
 
@@ -47,8 +48,8 @@ uses a read-only copy of it and never changes it on its own.
 | Sensor ID | `web-01` | `SENSOR_ID` |
 | Campaign ID header | `X-Campaign-Id` | `CAMPAIGN_HEADER` |
 | Collector ingest format | JSON array (batch), ≤50 events | — |
-| Simulator source allowlist (for trusting campaign IDs) | `172.28.0.0/16` (lab network; no value given yet, so change it if Compose uses another subnet) | `SIMULATOR_SOURCE_CIDRS` |
-| Detailed-health allowlist | `127.0.0.1/32,172.28.0.0/16` | `HEALTH_ALLOWED_CIDRS` |
+| Simulator source allowlist (for trusting campaign IDs) | `172.28.0.50/32`: the simulator container's fixed IP on `lab_net` (172.28.0.0/16). Never the whole subnet (P9) | `SIMULATOR_SOURCE_CIDRS` |
+| Detailed-health allowlist | `127.0.0.1/32` (container-local). Integrator adds the collector's fixed `/32` | `HEALTH_ALLOWED_CIDRS` |
 | Synthetic login | `j.miller` / value set in `.env.example`, marked as fake | `DECOY_USER`, `DECOY_PASSWORD` |
 | JSONL log path | `/data/web-events.jsonl` | `EVENT_LOG_PATH` |
 
@@ -320,7 +321,7 @@ blockers, next step) and **stops for your approval**.
 | 1 | Port / collector URL | Web decoy **8080** (host `127.0.0.1:8080`); collector `http://collector:8000/api/events` | Owner |
 | 2 | Ingest format | **Batch**: JSON array, ≤50 events per POST | Owner |
 | 3 | Detection metadata location | `raw_evidence_redacted.detections[]` + `tags`; shape fixed in `docs/INTEGRATOR_NOTES.md` §2 | Owner |
-| 4 | Campaign header | `X-Campaign-Id`. No CIDR was given, so the default is `172.28.0.0/16`. Set `SIMULATOR_SOURCE_CIDRS` to the real Compose subnet | Owner (CIDR: Claude default) |
+| 4 | Campaign header | `X-Campaign-Id`, trusted only from `172.28.0.50/32` (the simulator's fixed lab IP; see P9) | Owner (IP: Claude default) |
 | 5 | Health | **Detailed.** To keep the decoy from exposing itself, it's served only to `HEALTH_ALLOWED_CIDRS` (see §0.1 P8 and §3.1) | Owner + Claude safeguard |
 | 6 | ATT&CK on probes | **Candidate mappings with a label.** T1190 for SQLi/injection-like probes and T1595.003 for route scans, each with `status:"candidate"`, the rationale "attempt observed, no evidence of success", and confidence ≤ medium. T1505.003 is never used for a path probe | Claude (owner deferred) |
 | 7 | Upload content | **Metadata only.** Content is hashed and then discarded, never stored | Claude (owner deferred) |

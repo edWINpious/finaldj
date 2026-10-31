@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Documents - Halden Freight{% endblock %}
+{% block content %}
+<section class="panel narrow">
+  <h2>Upload customs document</h2>
+  <p class="muted">PDF or image, max 1 MB.</p>
+  <form method="post" action="/upload" enctype="multipart/form-data">
+    <input type="file" name="document">
+    <button class="btn" type="submit">Upload</button>
+  </form>
+</section>
+{% endblock %}

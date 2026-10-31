@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Halden Freight Partner Portal{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">Halden Freight</a>
+    <nav>
+      <a href="/search">Track</a>
+      {% if session %}
+        <a href="/portal">My shipments</a>
+        <a href="/upload">Documents</a>
+        <form class="inline" method="post" action="/logout"><button type="submit">Sign out</button></form>
+      {% else %}
+        <a href="/login">Partner sign in</a>
+      {% endif %}
+    </nav>
+  </header>
+  <main>{% block content %}{% endblock %}</main>
+  <footer>&copy; 2026 Halden Freight AS &middot; Partner services &middot; Support: partners@halden-freight.example</footer>
+</body>
+</html>

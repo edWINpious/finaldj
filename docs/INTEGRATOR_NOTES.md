@@ -53,7 +53,8 @@ In Streamlit:
 ## 4. Campaign IDs
 
 - Header: `X-Campaign-Id`, value `^[A-Za-z0-9_-]{1,64}$`.
-- Web trusts the header only from `SIMULATOR_SOURCE_CIDRS` (default `172.28.0.0/16`). **Tell the web owner the real Compose lab subnet.** From any other source it's discarded and the event is tagged `untrusted_campaign_header`.
+- Web trusts the header only from `SIMULATOR_SOURCE_CIDRS` (default `172.28.0.50/32`). From any other source it's discarded and the event is tagged `untrusted_campaign_header`.
+- **The simulator must run as a container on `lab_net` with a fixed IP** (proposed `172.28.0.50`). Verified in the Phase 2 container test: anything sent from the host through a published `127.0.0.1:` port reaches the decoy from the Docker gateway (`172.28.0.1`). A host-run simulator would therefore (a) share one source IP with every other host process, breaking per-attacker profiles, and (b) be impossible to tell apart from other host traffic for campaign trust.
 
 ## 5. Source IP
 
@@ -62,11 +63,11 @@ Web uses the TCP peer address. `X-Forwarded-For` is ignored unless `TRUST_PROXY=
 ## 6. Health for adapter status
 
 - `GET http://web-decoy:8080/health` returns detailed JSON (sensor id, collector reachability, queue depth, dropped events, spool backlog, detection counters). Field list: PLAN.md §3.1.
-- This only works from `HEALTH_ALLOWED_CIDRS` (default `127.0.0.1/32,172.28.0.0/16`). Other sources get a normal 404, so attackers can't tell the site is a honeypot.
+- This only works from `HEALTH_ALLOWED_CIDRS` (default `127.0.0.1/32`). **Give the collector a fixed lab IP and tell the web owner**, so it can be added as a `/32`. Never the whole subnet (see §4: the gateway address would then be trusted). Other sources get a normal 404, so attackers can't tell the site is a honeypot.
 
 ## 7. Requests to you
 
 1. Accept or reject the §2 detection shape.
-2. Confirm the lab subnet (needed for §4 and §6).
+2. Confirm the lab subnet, the collector's fixed IP (§6) and the simulator's fixed IP (§4).
 3. Confirm the dashboard renders evidence as plain text only (§3).
 4. Deduplicate on `event_id` (§1).

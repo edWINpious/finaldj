@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Track shipment - Halden Freight{% endblock %}
+{% block content %}
+<section class="panel narrow">
+  <h2>Track a shipment</h2>
+  <form method="get" action="/search">
+    <label>Shipment or container number <input name="q" value="{{ q }}" maxlength="200"></label>
+    <button class="btn" type="submit">Search</button>
+  </form>
+  {% if q %}<p>No results for &ldquo;{{ q }}&rdquo;.</p>{% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,42 @@
+# Standalone dev compose for the web decoy ONLY.
+# The team docker-compose.yml (collector, dashboard, other decoys) belongs to the integrator.
+name: web-decoy-dev
+
+services:
+  web-decoy:
+    build: ./services/web
+    image: halden-web-decoy:dev
+    env_file:
+      - path: ./services/web/.env
+        required: false
+    ports:
+      - "127.0.0.1:8080:8080"     # localhost only, never 0.0.0.0
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    volumes:
+      - web-data:/data
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 256m
+    networks:
+      lab_net:
+        ipv4_address: 172.28.0.10
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health',timeout=2).status==200 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+networks:
+  lab_net:
+    # Not `internal: true` yet: Docker cannot publish ports from an internal-only
+    # network. Egress blocking + isolation proof is a Phase 5 item (PLAN §8).
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  web-data:

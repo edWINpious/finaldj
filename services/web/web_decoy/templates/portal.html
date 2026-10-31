@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h2>Welcome, {{ user.name }}</h2>
+  <p class="muted">{{ user.company }}</p>
+  <table>
+    <thead><tr><th>Shipment</th><th>Route</th><th>Status</th><th>ETA</th></tr></thead>
+    <tbody>
+    {% for s in shipments %}
+      <tr><td><a href="/portal/shipments/{{ s.id }}">#{{ s.id }}</a></td><td>{{ s.origin }} &rarr; {{ s.destination }}</td><td>{{ s.status }}</td><td>{{ s.eta }}</td></tr>
+    {% else %}
+      <tr><td colspan="4">No active shipments.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p><a href="/download?file=manifest-template.csv">Download manifest template</a></p>
+</section>
+{% endblock %}
