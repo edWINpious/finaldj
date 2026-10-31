@@ -95,9 +95,30 @@ def test_no_hardcoded_real_looking_secrets():
 def test_dockerfile_hardening():
     text = (PKG.parent / "Dockerfile").read_text()
     assert "USER 10001" in text and "--no-proxy-headers" in text and "--no-access-log" in text
-    compose = (PKG.parent.parent.parent / "docker-compose.web.yml").read_text()
-    assert '"127.0.0.1:8080:8080"' in compose and "read_only: true" in compose
-    assert "cap_drop: [ALL]" in compose and "no-new-privileges:true" in compose
+
+
+def _compose(name):
+    path = PKG.parent.parent.parent / name
+    return path.read_text() if path.exists() else None
+
+
+def test_default_compose_is_isolated():
+    """Phase 5: no published port, internal network, host unreachable (P12)."""
+    compose = _compose("docker-compose.web.yml")
+    if compose is None:
+        pytest.skip("compose file not mounted")
+    assert "ports:" not in compose
+    assert "internal: true" in compose
+    assert 'com.docker.network.bridge.inhibit_ipv4: "true"' in compose
+    assert "read_only: true" in compose and "cap_drop: [ALL]" in compose
+    assert "no-new-privileges:true" in compose
+
+
+def test_browse_override_binds_localhost_only():
+    browse = _compose("docker-compose.web.browse.yml")
+    if browse is None:
+        pytest.skip("compose file not mounted")
+    assert '"127.0.0.1:8080:8080"' in browse and "0.0.0.0" not in browse
 
 
 def test_csp_blocks_scripts(client):

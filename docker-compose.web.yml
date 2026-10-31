@@ -1,5 +1,11 @@
-# Standalone dev compose for the web decoy ONLY.
-# The team docker-compose.yml (collector, dashboard, other decoys) belongs to the integrator.
+# Standalone compose for the web decoy ONLY (the team compose belongs to the integrator).
+#
+# DEFAULT = ISOLATED: lab_net is `internal`, so the decoy has NO route to the internet
+# and NO port is published to the host. The simulator and collector reach it from
+# inside lab_net (decoy: 172.28.0.10:8080).
+#
+# To browse it from this machine, add the browse override (weaker isolation, see that file):
+#   docker compose -f docker-compose.web.yml -f docker-compose.web.browse.yml up -d
 name: web-decoy-dev
 
 services:
@@ -9,8 +15,6 @@ services:
     env_file:
       - path: ./services/web/.env
         required: false
-    ports:
-      - "127.0.0.1:8080:8080"     # localhost only, never 0.0.0.0
     read_only: true
     tmpfs:
       - /tmp:size=16m,mode=1777
@@ -32,8 +36,11 @@ services:
 
 networks:
   lab_net:
-    # Not `internal: true` yet: Docker cannot publish ports from an internal-only
-    # network. Egress blocking + isolation proof is a Phase 5 item (PLAN §8).
+    internal: true          # no egress: no default gateway out of the lab
+    driver_opts:
+      # The host gets NO address on this bridge, so containers cannot reach services
+      # listening on the host either (internal alone still allowed that; PLAN P12).
+      com.docker.network.bridge.inhibit_ipv4: "true"
     ipam:
       config:
         - subnet: 172.28.0.0/16

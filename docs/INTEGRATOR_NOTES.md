@@ -83,8 +83,29 @@ Sample of 11 real events from an end-to-end container run: `services/web/samples
 
 Not emitted: successful static asset loads, and `/health` polls from `HEALTH_ALLOWED_CIDRS`.
 
-## 8. Requests to you
+## 8. Network setup the team compose must copy (containment)
 
+The web decoy's standalone compose proves this layout. The team `docker-compose.yml` should keep it:
+
+```yaml
+networks:
+  lab_net:
+    internal: true                                   # no internet egress
+    driver_opts:
+      com.docker.network.bridge.inhibit_ipv4: "true"  # decoys cannot reach the Docker host either
+    ipam: { config: [ { subnet: 172.28.0.0/16 } ] }
+```
+
+- Why both settings: `internal` alone still let a container reach services listening on the host via `172.28.0.1` (verified; web PLAN.md P12).
+- Decoys (web `172.28.0.10`), the simulator (`172.28.0.50`) and the collector (proposed `172.28.0.20`) sit on `lab_net`.
+- The dashboard and the collector's host-facing port need a **separate** non-internal network. Don't attach decoys to it, or they get egress back.
+- Proof command and expected output: `services/web/README.md` → Containment proof.
+
+**Recommendation (not blocking for the hackathon):** any container on `lab_net` can POST to `/api/events`, including a compromised decoy, and could forge events. A per-sensor ingest token checked by the collector would close that. Tell the web owner if you add one; the emitter needs one header.
+
+## 9. Requests to you
+
+0. Publish `collector/schema.py` and a running collector so the web module can finish Phase 5 (swap the schema copy, prove events in `GET /api/events` and the dashboard).
 1. Accept or reject the §2 detection shape.
 2. Confirm the lab subnet, the collector's fixed IP (§6) and the simulator's fixed IP (§4).
 3. Confirm the dashboard renders evidence as plain text only (§3).
