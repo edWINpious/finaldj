@@ -66,6 +66,27 @@ CREATE TABLE IF NOT EXISTS quarantine (
     raw_sha256 TEXT NOT NULL,
     created_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS soc_outbox (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id TEXT NOT NULL UNIQUE,
+    body TEXT NOT NULL,
+    created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS soc_skipped (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    safe_id TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS soc_delivery (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    last_seq INTEGER NOT NULL DEFAULT 0,
+    delivered INTEGER NOT NULL DEFAULT 0,
+    state TEXT NOT NULL DEFAULT 'idle',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_status INTEGER,
+    updated_at REAL NOT NULL DEFAULT 0
+);
 """
 
 
@@ -111,8 +132,11 @@ class Store:
         checkpoint: Checkpoint | None,
         records: Iterable[dict[str, Any]],
         quarantined: Iterable[ParseError] = (),
+        canonical: Iterable[dict[str, Any]] = (),
+        skipped: Iterable[tuple[str, str]] = (),
+        max_soc_pending: int = 100_000,
     ) -> CommitResult:
-        """Atomically store records + quarantined lines and advance the checkpoint."""
+        """Atomically store records + quarantined lines + SOC queue and advance the checkpoint."""
         now = time.time()
         inserted = duplicates = 0
         with self._tx():
@@ -130,6 +154,19 @@ class Store:
                     "INSERT INTO quarantine (file, offset, reason, excerpt, raw_sha256, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                     (err.source, err.offset, err.reason, err.excerpt, err.raw_sha256, now),
                 )
+            pending = self.soc_pending()
+            for event in canonical:
+                if pending >= max_soc_pending:  # local logging must keep going if the SOC is stuck
+                    self.db.execute("INSERT INTO soc_skipped (safe_id, reason, created_at) VALUES (?, ?, ?)",
+                                    (event["event_id"], "queue_full", now))
+                    continue
+                pending += self.db.execute(
+                    "INSERT OR IGNORE INTO soc_outbox (event_id, body, created_at) VALUES (?, ?, ?)",
+                    (event["event_id"], json.dumps(event, separators=(",", ":"), ensure_ascii=False), now),
+                ).rowcount
+            for identifier, reason in skipped:
+                self.db.execute("INSERT INTO soc_skipped (safe_id, reason, created_at) VALUES (?, ?, ?)",
+                                (identifier, reason, now))
             if checkpoint is not None:
                 self.db.execute(
                     "INSERT INTO checkpoint (stream, fingerprint, file, offset, updated_at) VALUES (?, ?, ?, ?, ?) "
@@ -212,6 +249,53 @@ class Store:
     def _max_seq(self) -> int:
         return int(self.db.execute("SELECT COALESCE(MAX(seq), 0) FROM outbox").fetchone()[0])
 
+    # -- SOC delivery -----------------------------------------------------
+    # Only validated canonical events are ever in soc_outbox. The local outbox above is never sent.
+    def _soc_row(self) -> None:
+        self.db.execute("INSERT OR IGNORE INTO soc_delivery (id, updated_at) VALUES (1, ?)", (time.time(),))
+
+    def soc_fetch(self, limit: int) -> list[tuple[int, dict[str, Any]]]:
+        self._soc_row()
+        rows = self.db.execute(
+            "SELECT seq, body FROM soc_outbox WHERE seq > (SELECT last_seq FROM soc_delivery WHERE id = 1) "
+            "ORDER BY seq LIMIT ?", (limit,),
+        ).fetchall()
+        return [(seq, json.loads(body)) for seq, body in rows]
+
+    def soc_pending(self) -> int:
+        self._soc_row()
+        return int(self.db.execute(
+            "SELECT COUNT(*) FROM soc_outbox WHERE seq > (SELECT last_seq FROM soc_delivery WHERE id = 1)"
+        ).fetchone()[0])
+
+    def soc_mark_delivered(self, upto_seq: int, count: int) -> None:
+        self.db.execute("UPDATE soc_delivery SET last_seq = ?, delivered = delivered + ?, updated_at = ? WHERE id = 1",
+                        (upto_seq, count, time.time()))
+
+    def soc_set_state(self, state: str, attempts: int, last_status: int | None) -> None:
+        self._soc_row()
+        self.db.execute("UPDATE soc_delivery SET state = ?, attempts = ?, last_status = ?, updated_at = ? WHERE id = 1",
+                        (state, attempts, last_status, time.time()))
+
+    def soc_prune(self, retain: int) -> int:
+        """Remove delivered events only, keeping the newest `retain`. Pending events are never removed."""
+        self._soc_row()
+        last = self.db.execute("SELECT last_seq FROM soc_delivery WHERE id = 1").fetchone()[0]
+        newest = self.db.execute("SELECT COALESCE(MAX(seq), 0) FROM soc_outbox").fetchone()[0]
+        cutoff = min(last, newest - retain)
+        return 0 if cutoff <= 0 else self.db.execute("DELETE FROM soc_outbox WHERE seq <= ?", (cutoff,)).rowcount
+
+    def soc_status(self) -> dict[str, Any]:
+        self._soc_row()
+        q = self.db.execute
+        state, attempts, status, delivered = q(
+            "SELECT state, attempts, last_status, delivered FROM soc_delivery WHERE id = 1").fetchone()
+        return {
+            "state": state, "attempts": attempts, "last_status": status, "delivered": delivered,
+            "queued": self.soc_pending(),
+            "skipped": dict(q("SELECT reason, COUNT(*) FROM soc_skipped GROUP BY reason").fetchall()),
+        }
+
     # -- inspection -------------------------------------------------------
     def status(self) -> dict[str, Any]:
         q = self.db.execute
@@ -228,6 +312,7 @@ class Store:
             ],
             "quarantined": q("SELECT COUNT(*) FROM quarantine").fetchone()[0],
             "dead_letters": q("SELECT COUNT(*) FROM dead_letter").fetchone()[0],
+            "soc_delivery": self.soc_status(),
         }
 
     def quarantine_rows(self, limit: int = 20) -> list[dict[str, Any]]:

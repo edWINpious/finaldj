@@ -20,7 +20,7 @@ Time comes from event timestamps, so replaying a log gives the same findings as 
 | Rule ID | Config key | Fires when | Default severity | ATT&CK |
 |---|---|---|---|---|
 | SSH-BRUTE-001 | `ssh_bruteforce` | ≥ `threshold` (5) failed logins from one source IP within `window_seconds` (60). One finding per episode; an episode ends after a failure-free gap longer than the window | medium | T1110, because tried passwords are not recorded |
-| SSH-AUTH-002 | `ssh_decoy_login` | Any successful login to the decoy (the decoy has no legitimate users). Escalated when ≥ `min_prior_failures` (3) failures came from that IP within `lookback_seconds` (600) | medium → high (escalated) | T1078; escalated adds T1110.001 |
+| SSH-AUTH-002 | `ssh_decoy_login` | Any successful login to the decoy (the decoy has no legitimate users). Escalated when ≥ `min_prior_failures` (3) failures came from that IP within `lookback_seconds` (600) | medium → high (escalated) | T1078; escalated adds T1110 |
 | SSH-EXEC-001 | `ssh_shell_activity` | First command in a session | low | T1059.004 |
 | SSH-DISC-001 | `ssh_discovery` | A session uses N distinct discovery techniques within `window_seconds` (300). `levels = [[3,"medium"],[5,"high"]]` emits once per level | medium / high | Only the techniques actually observed: T1082, T1033, T1087.001, T1083, T1016, T1049, T1057 |
 | SSH-CRED-001 | `ssh_credential_access` | Read of a configured honeytoken file, of `/etc/shadow`, or of a generic credential file (`.env`, `.my.cnf`, `id_rsa`, ...) | critical (honeytoken), high (others) | T1552.001; T1003.008 for shadow |
@@ -71,7 +71,7 @@ If the collector never saw the login (for example, it started mid-session), the 
 
 ```
 MEDIUM   SSH-BRUTE-001  SSH brute force from 172.18.0.3: 5 failed logins in 6s  [T1110]
-HIGH     SSH-AUTH-002   Decoy SSH login as 'backup' from 172.18.0.3 after 8 failed attempts  [T1110.001,T1078]
+HIGH     SSH-AUTH-002   Decoy SSH login as 'backup' from 172.18.0.3 after 8 failed attempts  [T1110,T1078]
 MEDIUM   SSH-DISC-001   Discovery burst: 3 ATT&CK discovery techniques in session 03394a5fdc06  [T1033,T1082,T1087.001]
 HIGH     SSH-DISC-001   Discovery burst: 5 ATT&CK discovery techniques ...  [T1016,T1033,T1049,T1082,T1087.001]
 CRITICAL SSH-CRED-001   Honeytoken credential file read: /var/backups/db/.my.cnf  [T1552.001]

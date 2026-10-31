@@ -120,6 +120,8 @@ Each record says which honeypot produced it, without relying on the network path
 
 ## Transport (HTTP sink)
 
+**Superseded for the shared SOC by [canonical-mapping.md](canonical-mapping.md).** Delivery to the shared collector sends validated canonical events as a plain JSON array of at most 50, from `soc_outbox` only, and never dead-letters. The envelope, `field_map` and retry notes below describe the original standalone project. Delivery is off.
+
 The HTTP sink is enabled only when a URL is configured, through `COWRIE_SOC_HTTP_URL` or `SOC_INGEST_URL` in `.env` for compose, or `[sinks.http]` in `collector.toml`.
 
 - `POST <url>`, `Content-Type: application/json`, optional `Authorization: Bearer $COWRIE_SOC_HTTP_TOKEN`.

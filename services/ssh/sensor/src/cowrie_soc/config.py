@@ -18,6 +18,9 @@ from pathlib import Path
 from typing import Any
 
 
+MAX_COLLECTOR_BATCH = 50  # collector/app.py returns 413 above this
+
+
 class ConfigError(ValueError):
     pass
 
@@ -38,6 +41,7 @@ class CollectorConfig:
     state_db: str = "/data/state/collector.db"
     max_pending_records: int = 100_000
     retain_delivered_records: int = 20_000
+    max_soc_pending: int = 100_000
     scenario_id: str = ""
 
 
@@ -61,8 +65,8 @@ class HttpSinkConfig:
     token_env: str = "COWRIE_SOC_HTTP_TOKEN"
     token_file: str = ""
     timeout_seconds: float = 5.0
-    batch_size: int = 100
-    payload_format: str = "envelope"
+    batch_size: int = 50
+    payload_format: str = "array"
     verify_tls: bool = True
     field_map: dict[str, str] = field(default_factory=dict)
     headers: dict[str, str] = field(default_factory=dict)
@@ -147,7 +151,9 @@ def _validate(cfg: Config) -> None:
     if cfg.http.enabled:
         if not cfg.http.url.startswith(("http://", "https://")):
             raise ConfigError("[sinks.http] enabled but url is not an http(s) URL")
-        if cfg.http.payload_format not in ("envelope", "array"):
-            raise ConfigError("[sinks.http] payload_format must be 'envelope' or 'array'")
+        if cfg.http.payload_format != "array" or cfg.http.field_map:
+            raise ConfigError("[sinks.http] the collector takes a plain array: payload_format 'array', no field_map")
+        if not 1 <= cfg.http.batch_size <= MAX_COLLECTOR_BATCH:
+            raise ConfigError(f"[sinks.http] batch_size must be 1 to {MAX_COLLECTOR_BATCH}")
     if not cfg.jsonl.enabled and not cfg.http.enabled:
         raise ConfigError("no sink enabled: enable [sinks.jsonl] and/or [sinks.http]")

@@ -18,6 +18,8 @@ state_db = "/data/state/collector.db"
 # Ingestion pauses (Cowrie keeps writing to disk) when this many records are undelivered.
 max_pending_records = 100000
 retain_delivered_records = 20000
+# Validated events waiting for the SOC. Beyond this, new events are skipped and counted.
+max_soc_pending = 100000
 # Optional controlled-lab correlation hint copied onto every event (empty = null).
 scenario_id = ""
 
@@ -38,8 +40,8 @@ enabled = false
 url = ""
 token_env = "COWRIE_SOC_HTTP_TOKEN"
 timeout_seconds = 5.0
-batch_size = 100
-payload_format = "envelope"   # "envelope" or "array"; see docs/integration-contract.md
+batch_size = 50               # the collector refuses more than 50 events
+payload_format = "array"      # the collector takes a plain JSON array
 verify_tls = true
 # Rename top-level fields to match the team schema once it is known, e.g.
 # field_map = { source_ip = "src_ip", session_id = "session" }

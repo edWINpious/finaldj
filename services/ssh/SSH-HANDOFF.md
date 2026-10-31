@@ -89,7 +89,7 @@ There are 8 rule-based, configurable rules, run in the collector ([docs/detectio
 | Rule | Fires on | Default severity | ATT&CK |
 |---|---|---|---|
 | SSH-BRUTE-001 | ≥5 failed logins from one source IP in 60 s (one finding per episode) | medium | T1110, because tried passwords are not recorded |
-| SSH-AUTH-002 | Any login to the decoy; escalated if ≥3 failures from that IP in 600 s | medium → high | T1078; escalated adds T1110.001 |
+| SSH-AUTH-002 | Any login to the decoy; escalated if ≥3 failures from that IP in 600 s | medium → high | T1078; escalated adds T1110 |
 | SSH-EXEC-001 | First command in a session | low | T1059.004 |
 | SSH-DISC-001 | ≥3 (medium) / ≥5 (high) distinct discovery techniques in one session within 300 s | medium / high | The observed subset of T1082, T1033, T1087.001, T1083, T1016, T1049, T1057 |
 | SSH-CRED-001 | Read of a honeytoken file (critical), `/etc/shadow` (T1003.008) or a credential-named file | critical / high | T1552.001, T1003.008 |

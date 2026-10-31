@@ -318,11 +318,12 @@ class DecoyLoginRule(Rule):
                 src.failures_consumed_until = now
         if escalate:
             title = f"Decoy SSH login as '{user}' from {ip} after {len(prior)} failed attempts"
-            techniques = ["T1110.001", "T1078"]
+            # T1110, not T1110.001: tried passwords are not recorded, so guessing and spraying look alike.
+            techniques = ["T1110", "T1078"]
             explanation = (
                 f"{ip} logged in to the decoy as '{user}' after {len(prior)} failed logins in the "
                 f"previous {lookback:.0f}s (threshold {self.cfg['min_prior_failures']}), consistent with a "
-                "guessed credential being used. Mapped to T1110.001 and T1078 (a decoy account was used; "
+                "brute-forced credential being used. Mapped to T1110 and T1078 (a decoy account was used; "
                 "no production account is involved)."
             )
             severity = self.cfg["escalated_severity"]

@@ -34,8 +34,8 @@ def receiver(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[
     server.server_close()
 
 
-def test_pipeline_delivers_to_dev_receiver(receiver: tuple[str, Any], tmp_path: Path, config: Config,
-                                           real_lines: list[bytes], monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sink_delivers_to_dev_receiver(receiver: tuple[str, Any], tmp_path: Path, config: Config,
+                                       real_lines: list[bytes], monkeypatch: pytest.MonkeyPatch) -> None:
     url, server = receiver
     monkeypatch.setenv("COWRIE_SOC_HTTP_TOKEN", "s3cret")
     logs = tmp_path / "logs"
@@ -43,16 +43,18 @@ def test_pipeline_delivers_to_dev_receiver(receiver: tuple[str, Any], tmp_path: 
     (logs / "cowrie.json").write_bytes(b"\n".join(real_lines) + b"\n")
     config.source.log_dir = str(logs)
     config.collector.state_db = str(tmp_path / "state.db")
-    config.jsonl.path = str(tmp_path / "out.jsonl")
-    config.http.enabled, config.http.url = True, url
+    out = tmp_path / "out.jsonl"
+    config.jsonl.path = str(out)
     p = Pipeline(config)
     for _ in range(20):
         p.step()
-    state = server.state
-    assert len(state.records) == 104 + 14
-    assert state.duplicates == 0
-    # Re-sending the same records (at-least-once) is de-duplicated by record id.
+    records = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()]
+    assert len(records) == 104 + 14
     sink = HttpSink(url, EnvelopeEncoder("x"), token_env="COWRIE_SOC_HTTP_TOKEN")
+    sink.send(records)
+    state = server.state
+    assert len(state.records) == 118 and state.duplicates == 0
+    # Re-sending the same records (at-least-once) is de-duplicated by record id.
     sink.send(state.records[:5])
     assert state.duplicates == 5 and len(state.records) == 118
 
