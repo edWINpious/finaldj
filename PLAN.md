@@ -1,6 +1,7 @@
 # PLAN.md — Web Honeypot Module (Phase 1: Inspect and Plan)
 
-Status: **DRAFT — waiting for human review. No implementation has started.**
+Status: **APPROVED with decisions recorded in §9. All Phase 1 problems resolved
+(see §0.1). No implementation has started; Phase 2 awaits go-ahead.**
 
 Sources: `HANDOFF_FINAL.md` (authoritative), `docs/TEAM_INTEGRATION_CONTEXT.md`,
 `docs/handoff/02_WEB/context.md`, `docs/handoff/02_WEB/claude.md`.
@@ -16,14 +17,27 @@ uses a read-only copy of it and never changes it on its own.
 | Item | Finding |
 |---|---|
 | Repo | `RugvedHinge1/PS4---DJS` is the web owner's own repo. It contained only the vendored `security-audit` skill. There are no backend conventions to follow yet. |
-| Python | The plan targets **3.12** in the container, as the spec requires. The dev sandbox has 3.13. Tests must pass on both, and only the container result counts as evidence. |
-| Docker | Available (29.x), so Compose-based tests are possible here. |
+| Python | Spec target **3.12**. Verified: `python3.12` = 3.12.3 on the dev box, and `python:3.12-slim` image (`sha256:aa943ce4…0d159`) runs 3.12.16. All tests run under 3.12; evidence comes from the container run. |
+| Docker | Daemon was not running; started with `dockerd`. Docker 29.9.2 works, so container tests are possible here. |
 | Shared schema | Taken from `HANDOFF_FINAL.md §6`. There is no `collector/schema.py` to import yet. |
-| Collector URL / ports | **Not agreed with the integrator yet.** The defaults below are marked `PENDING`. |
+| Collector URL / ports | Confirmed by the web owner: port 8080, batch ingest (see §1). |
+
+### 0.1 Problems found in Phase 1 and how each is resolved
+
+| # | Problem | Resolution | Owner |
+|---|---|---|---|
+| P1 | Anyone can forge `X-Campaign-Id`, which would merge real traffic into a demo campaign | Accept it only with a valid format **and** a source in `SIMULATOR_SOURCE_CIDRS`; otherwise `null` + tag `untrusted_campaign_header` (§4) | Web (here) |
+| P2 | `X-Forwarded-For` lets anyone fake their source IP | Ignored unless `TRUST_PROXY=1` (§4) | Web (here) |
+| P3 | Raw attacker strings in evidence can run as XSS in the Streamlit dashboard | Web side: evidence is bounded and control-char-stripped, and HTML-looking values get tag `contains_markup`. Dashboard side: must never use `unsafe_allow_html` on event data — written up in `docs/INTEGRATOR_NOTES.md` §3 | Web + integrator |
+| P4 | FastAPI `/docs` and `/openapi.json` would reveal the decoy | Disabled; test asserts 404 (§3.4) | Web (here) |
+| P5 | Redacting the password before detection would hide SQLi in the password field | Detection runs on the in-memory value first, then redaction; only rule + field name are stored (§4.1) | Web (here) |
+| P6 | The schema has no field for detection results | Agreed: `raw_evidence_redacted.detections[]` + `tags`, with a fixed sub-shape documented in `docs/INTEGRATOR_NOTES.md` §2 | Web + integrator |
+| P7 | Dev Python (3.13) ≠ spec (3.12) | Use `python3.12` locally and the pinned 3.12 image for evidence runs | Web (here) |
+| P8 | A detailed `/health` on the attacker-facing port shows it's a honeypot (new conflict from decision Q5) | Detailed JSON only for sources in `HEALTH_ALLOWED_CIDRS` (lab network + loopback). Everyone else gets the site's normal 404 (§3.1, §6) | Web (here) |
 
 ---
 
-## 1. Proposed defaults (PENDING integrator confirmation)
+## 1. Configuration defaults (port + batch confirmed; CIDRs adjustable)
 
 | Setting | Default | Env var |
 |---|---|---|
@@ -32,7 +46,9 @@ uses a read-only copy of it and never changes it on its own.
 | Collector ingest URL | `http://collector:8000/api/events` | `COLLECTOR_URL` |
 | Sensor ID | `web-01` | `SENSOR_ID` |
 | Campaign ID header | `X-Campaign-Id` | `CAMPAIGN_HEADER` |
-| Simulator source allowlist (for trusting campaign IDs) | `172.28.0.0/16` (lab network) | `SIMULATOR_SOURCE_CIDRS` |
+| Collector ingest format | JSON array (batch), ≤50 events | — |
+| Simulator source allowlist (for trusting campaign IDs) | `172.28.0.0/16` (lab network; no value given yet, so change it if Compose uses another subnet) | `SIMULATOR_SOURCE_CIDRS` |
+| Detailed-health allowlist | `127.0.0.1/32,172.28.0.0/16` | `HEALTH_ALLOWED_CIDRS` |
 | Synthetic login | `j.miller` / value set in `.env.example`, marked as fake | `DECOY_USER`, `DECOY_PASSWORD` |
 | JSONL log path | `/data/web-events.jsonl` | `EVENT_LOG_PATH` |
 
@@ -90,7 +106,28 @@ Partner Portal"**. Every name, user, order and file is synthetic.
 | `/portal` | GET | Synthetic shipments dashboard (requires session, otherwise 302 to `/login`) | `http_request` |
 | `/portal/shipments/{id}` | GET | Synthetic shipment record | `http_request` |
 | `/search?q=` | GET | "No results for {q}" with q **autoescaped** | `http_request` |
-| `/health` | GET | `{"status":"ok"}` and nothing else (see Q5) | not emitted |
+| `/health` | GET | From `HEALTH_ALLOWED_CIDRS`: detailed JSON (below). Any other source: the normal site 404, and a `route_probe` event is emitted | allowlisted: not emitted |
+
+Detailed health response (Phase 2 returns the static fields; Phase 3 fills in
+the telemetry ones):
+
+```json
+{
+  "status": "ok | degraded",
+  "sensor_id": "web-01",
+  "service": "web",
+  "version": "<git sha or semver>",
+  "uptime_s": 1234,
+  "collector": {"url": "http://collector:8000/api/events", "reachable": true,
+                "last_success": "RFC3339|null", "last_error": "string|null"},
+  "queue": {"depth": 0, "capacity": 10000, "dropped_events": 0},
+  "spool": {"pending_events": 0},
+  "events_emitted_total": 0,
+  "detections_total": {"W-SQLI-01": 0},
+  "event_log_path": "/data/web-events.jsonl"
+}
+```
+`status` is `degraded` when the collector is unreachable or events are being dropped.
 
 ### 3.2 Bait routes (P0 enumeration targets)
 
@@ -169,8 +206,8 @@ and which field (`field: "password"`), never the value.
 - Each event is appended to `EVENT_LOG_PATH` (JSONL), which is the
   structured-JSON log the spec asks for.
 - Delivery: a bounded `asyncio.Queue` (10,000). A background task POSTs to
-  `COLLECTOR_URL` with a 2 s timeout and batches of 50 or less, if the
-  integrator accepts batches (Q2).
+  `COLLECTOR_URL` with a 2 s timeout, as a JSON array of 50 events or less,
+  flushed at least every 1 s.
 - When the collector is down, events go to `/data/web-spool.jsonl`. A
   `python -m web_decoy.telemetry.replay` command resends them later.
 - When the queue is full, events are dropped and `dropped_events` goes up. The
@@ -204,12 +241,12 @@ pathological strings and checks the time budget.
 | ID | Pri | Rule | Trigger | Label / mapping candidate | Confidence |
 |---|---|---|---|---|---|
 | W-ENUM-01 | P0 | Sensitive-path probe | Request to the bait list (§3.2) or webshell paths | `enum:sensitive_path`; OWASP A05; **ATT&CK: none on a single request** | low |
-| W-ENUM-02 | P0 | Route enumeration | ≥8 distinct 404/403/bait paths from one source within 60 s | `enum:route_scan`; T1595.003 (wordlist scanning) as candidate only, pending integrator agreement (Q6) | medium |
+| W-ENUM-02 | P0 | Route enumeration | ≥8 distinct 404/403/bait paths from one source within 60 s | `enum:route_scan`; T1595.003 (wordlist scanning) as candidate | medium |
 | W-AUTH-01 | P0 | Failed login | Each wrong credential | `auth:failed` | — |
 | W-AUTH-02 | P0 | Brute force | ≥5 failures, same source + same username, within 60 s | T1110.001 | medium (≥5) / high (≥15) |
 | W-AUTH-03 | P0 | Password spraying | ≥4 distinct usernames from one source, ≤2 tries each, within 5 min | T1110.003 | medium |
 | W-AUTH-04 | P0 | Synthetic success | Synthetic credentials accepted | `auth:decoy_success`; later activity in the session tagged `post_auth` | high |
-| W-SQLI-01 | P0 | SQLi-like input | `' or 1=1`, `union select`, `--`/`#` after a quote, `sleep(`, `benchmark(`, `information_schema`, stacked `;` + keyword | `probe:sqli`; OWASP A03; T1190 **candidate**, labelled "attempt, not success" (Q6) | medium |
+| W-SQLI-01 | P0 | SQLi-like input | `' or 1=1`, `union select`, `--`/`#` after a quote, `sleep(`, `benchmark(`, `information_schema`, stacked `;` + keyword | `probe:sqli`; OWASP A03; T1190 **candidate**, labelled "attempt, not success" | medium |
 | W-XSS-01 | P0 | XSS-like input | `<script`, `on\w+=`, `javascript:`, `<svg`/`<img` + event handler, `alert(`/`document.cookie` | `probe:xss`; OWASP A03 | medium |
 | W-PATH-01 | P0 | Path traversal-like | `../`, `..\`, `%2e%2e`, `..%2f`, `/etc/passwd`, `win.ini`, `%00` | `probe:path_traversal`; OWASP A01 | medium |
 | W-SSRF-01 | P1 | SSRF-like param | URL-ish value pointing to loopback, link-local `169.254.169.254`, RFC1918, `localhost`, `file://`, `gopher://`, `dict://` | `probe:ssrf`; OWASP A10 | medium |
@@ -230,7 +267,8 @@ correlation and alerting belong to the collector, not here.
 |---|---|---|
 | Command execution | No `subprocess`/`os.system`/`eval`/`exec` anywhere in the module | Static grep test fails if any appear |
 | Stored/reflected XSS on decoy | Jinja2 autoescape; no `|safe`; CSP `default-src 'self'; script-src 'none'` | Submitting `<script>` comes back escaped; CSP header present |
-| XSS **into the SOC dashboard** | Evidence holds raw attacker strings | Handoff note to integrator: never render evidence with `unsafe_allow_html` |
+| XSS **into the SOC dashboard** | Evidence is bounded and stripped of control chars; HTML-looking values tagged `contains_markup`; `docs/INTEGRATOR_NOTES.md` §3 requires plain-text rendering | `test_redaction.py` checks the tag and bounds. The dashboard side is the integrator's to test |
+| Detailed health leaks honeypot identity | Detailed JSON only for `HEALTH_ALLOWED_CIDRS`; everyone else gets the normal 404 | `test_routes.py`: allowlisted client gets JSON, other client gets 404 with the same body as an unknown path |
 | Path traversal | `/download` uses a dict lookup; no `open()` on request input | `../../etc/passwd` returns 404 and no host contents |
 | SSRF | No HTTP client in route modules; preview returns a canned answer | Test monkeypatches `socket.create_connection` to raise, then hits preview with `http://169.254.169.254/` |
 | Upload execution | Content discarded after hashing; 1 MiB cap | Upload a `.php` → metadata event, 413 above cap, no file on disk |
@@ -267,7 +305,7 @@ blockers, next step) and **stops for your approval**.
 
 | Phase | Builds | Exit test (must pass before asking for approval) |
 |---|---|---|
-| **1** (this) | `PLAN.md`, `PROJECT_STATUS.md`, handoff docs committed | You review and answer the questions in §9 |
+| **1** (this) | `PLAN.md`, `PROJECT_STATUS.md`, `docs/INTEGRATOR_NOTES.md`, handoff docs committed | Questions answered (§9), problems resolved (§0.1) — done |
 | **2** Realistic decoy | App, templates, fixtures, all routes in §3 (P1 traps return their canned responses; no telemetry yet), `/health`, Dockerfile, standalone compose | `test_routes.py`, `test_auth.py`; container starts and responds on 127.0.0.1:8080 |
 | **3** Safe telemetry | Middleware, redaction, schema copy, emitter + JSONL + spool, body caps, campaign gating | `test_schema.py`, `test_redaction.py`, `test_emitter.py`, `test_campaign.py`; sample JSONL inspected by hand |
 | **4** Detection | Normalization, P0 rules, then P1 rules, mappings | `test_detection_p0.py`, `test_detection_p1.py`, `test_redos.py`, `test_safety.py` |
@@ -275,19 +313,20 @@ blockers, next step) and **stops for your approval**.
 
 ---
 
-## 9. Open questions — need answers before Phase 2
+## 9. Decisions (answered by the web owner, 2026-10-31)
 
-**For the integrator:**
-1. **Port and URL:** are web decoy `8080` and collector `http://collector:8000/api/events` OK?
-2. **Batch format:** does `POST /api/events` accept a JSON array, or one event per request?
-3. **Where detection metadata goes:** the schema has no field for rule hits, OWASP labels or ATT&CK candidates. My plan puts them in `raw_evidence_redacted.detections[]` plus `tags`. Does the integrator agree, or will they add a schema field?
-4. **Campaign header:** is the name `X-Campaign-Id` agreed with the simulator owner? What is the lab network CIDR?
+| # | Question | Decision | Decided by |
+|---|---|---|---|
+| 1 | Port / collector URL | Web decoy **8080** (host `127.0.0.1:8080`); collector `http://collector:8000/api/events` | Owner |
+| 2 | Ingest format | **Batch**: JSON array, ≤50 events per POST | Owner |
+| 3 | Detection metadata location | `raw_evidence_redacted.detections[]` + `tags`; shape fixed in `docs/INTEGRATOR_NOTES.md` §2 | Owner |
+| 4 | Campaign header | `X-Campaign-Id`. No CIDR was given, so the default is `172.28.0.0/16`. Set `SIMULATOR_SOURCE_CIDRS` to the real Compose subnet | Owner (CIDR: Claude default) |
+| 5 | Health | **Detailed.** To keep the decoy from exposing itself, it's served only to `HEALTH_ALLOWED_CIDRS` (see §0.1 P8 and §3.1) | Owner + Claude safeguard |
+| 6 | ATT&CK on probes | **Candidate mappings with a label.** T1190 for SQLi/injection-like probes and T1595.003 for route scans, each with `status:"candidate"`, the rationale "attempt observed, no evidence of success", and confidence ≤ medium. T1505.003 is never used for a path probe | Claude (owner deferred) |
+| 7 | Upload content | **Metadata only.** Content is hashed and then discarded, never stored | Claude (owner deferred) |
+| 8 | Theme | **"Halden Freight — Partner Portal"** | Claude (owner deferred) |
 
-**For you:**
-5. **Health endpoint exposure:** `/health` is on the same port an attacker sees. My plan returns only `{"status":"ok"}` there and keeps detailed status (queue depth, collector reachability) out of the decoy. Is that acceptable? Or does the integrator's `GET /health` adapter status need more from this service?
-6. **Mapping strictness:** the spec says T1190 only "if evidence supports an exploitation attempt". My reading is that an SQLi-like probe string *is* an attempt, so it gets a *candidate* T1190 with medium confidence and the label "attempt, not success". Stricter option: no ATT&CK for probes at all, OWASP only. Which do you want? The same question applies to T1595.003 for route scanning.
-7. **Persist upload content?** My plan keeps metadata only and discards the content, which is the safest choice. Do you need inert storage of samples for the demo?
-8. **Theme:** is "Halden Freight — Partner Portal" OK, or do you want a different fake business?
+The owner can reverse any decision marked "Claude" at any phase review.
 
 ---
 
