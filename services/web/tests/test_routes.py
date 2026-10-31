@@ -192,13 +192,39 @@ def test_download_traversal_never_reads_files(client, value, monkeypatch):
             "gopher://localhost:6379/_INFO", "http://example.com/"],
 )
 def test_preview_never_connects(client, url, monkeypatch):
-    def no_connect(*a, **kw):
-        raise AssertionError("outbound connection attempted")
+    attempts = []
 
-    monkeypatch.setattr(socket.socket, "connect", no_connect)
-    monkeypatch.setattr(socket, "create_connection", no_connect)
-    monkeypatch.setattr(socket, "getaddrinfo", no_connect)
-    r = client.get("/api/v1/preview", params={"url": url})
+    def no_connect(*a, **kw):
+        attempts.append(a)
+        raise OSError("outbound connection blocked by test")
+
+    # Start the client's event loop BEFORE blocking sockets. On Windows, creating
+    # an asyncio loop opens an internal loopback socketpair via connect(); that is
+    # test-harness plumbing, not the app. Only connects during the request count.
+    import builtins
+    import io
+    import os
+
+    file_reads = []
+
+    def no_open(*a, **kw):
+        file_reads.append(a)
+        raise OSError("file access blocked by test")
+
+    with client:
+        monkeypatch.setattr(socket.socket, "connect", no_connect)
+        monkeypatch.setattr(socket.socket, "connect_ex", no_connect)
+        monkeypatch.setattr(socket, "create_connection", no_connect)
+        monkeypatch.setattr(socket, "getaddrinfo", no_connect)
+        # file:// "fetches" read local files without any socket, so watch opens too.
+        monkeypatch.setattr(builtins, "open", no_open)
+        monkeypatch.setattr(io, "open", no_open)
+        monkeypatch.setattr(os, "open", no_open)
+        r = client.get("/api/v1/preview", params={"url": url})
+        monkeypatch.undo()
+    # Recorded, not just raised: a handler that swallows OSError cannot hide an attempt.
+    assert attempts == [], f"preview attempted outbound connection(s): {attempts!r}"
+    assert file_reads == [], f"preview touched the filesystem: {file_reads!r}"
     assert r.status_code == 200
     assert r.json() == {"status": "preview unavailable"}
 
