@@ -13,7 +13,7 @@ max_line_bytes = 1048576
 batch_max_lines = 500
 
 [collector]
-sensor_id = "cowrie-ssh-01"
+sensor_id = "ssh-01"
 state_db = "/data/state/collector.db"
 # Ingestion pauses (Cowrie keeps writing to disk) when this many records are undelivered.
 max_pending_records = 100000
@@ -22,9 +22,9 @@ retain_delivered_records = 20000
 scenario_id = ""
 
 [normalize]
-# Passwords tried against the decoy are attacker input, useful for brute-force analysis.
-# Set false to redact them from normalized output (raw.sha256 still covers the original line).
-include_passwords = true
+# Project rule: tried passwords never reach normalized output (raw.sha256 still covers the
+# original line). SSH-BRUTE-001 therefore reports T1110, not T1110.001 or T1110.003.
+include_passwords = false
 max_field_chars = 4096
 
 [sinks.jsonl]

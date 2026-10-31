@@ -33,7 +33,7 @@ class SourceConfig:
 
 @dataclass
 class CollectorConfig:
-    sensor_id: str = "cowrie-ssh-01"
+    sensor_id: str = "ssh-01"
     state_db: str = "/data/state/collector.db"
     max_pending_records: int = 100_000
     retain_delivered_records: int = 20_000
@@ -42,7 +42,7 @@ class CollectorConfig:
 
 @dataclass
 class NormalizeSection:
-    include_passwords: bool = True
+    include_passwords: bool = False
     max_field_chars: int = 4096
 
 
