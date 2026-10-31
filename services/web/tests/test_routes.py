@@ -156,31 +156,11 @@ def test_download_known_fake_file(client):
     ["../../etc/passwd", "/etc/passwd", "..%2f..%2fetc%2fpasswd", "....//....//etc/passwd",
      "..\\..\\windows\\win.ini", "manifest-template.csv%00.php", "app.py", "../web_decoy/app.py"],
 )
-def test_download_traversal_never_reads_files(client, value, monkeypatch):
-    import builtins
-    import io
-    import os
-    import pathlib
-
-    # Record calls instead of raising, so a handler that swallows exceptions
-    # cannot hide a file access from the test.
-    calls = []
-
-    def recorder(name):
-        def _rec(*a, **kw):
-            calls.append((name, a))
-            raise OSError("blocked by test")
-        return _rec
-
-    monkeypatch.setattr(builtins, "open", recorder("open"))
-    monkeypatch.setattr(io, "open", recorder("io.open"))
-    monkeypatch.setattr(os, "open", recorder("os.open"))
-    monkeypatch.setattr(pathlib.Path, "open", recorder("Path.open"))
-    monkeypatch.setattr(pathlib.Path, "read_text", recorder("Path.read_text"))
-    monkeypatch.setattr(pathlib.Path, "read_bytes", recorder("Path.read_bytes"))
-    r = client.get("/download", params={"file": value})
-    monkeypatch.undo()
-    assert calls == [], f"/download touched the filesystem: {calls!r}"
+def test_download_traversal_never_reads_files(client, value, fs_guard):
+    # Only the decoy's own event log may be opened; anything else is a traversal bug.
+    with fs_guard() as opened:
+        r = client.get("/download", params={"file": value})
+    assert opened == [], f"/download touched the filesystem: {opened!r}"
     assert r.status_code == 404
     assert "root:" not in r.text
 
@@ -191,7 +171,7 @@ def test_download_traversal_never_reads_files(client, value, monkeypatch):
     "url", ["http://169.254.169.254/latest/meta-data/", "http://127.0.0.1:22/", "file:///etc/passwd",
             "gopher://localhost:6379/_INFO", "http://example.com/"],
 )
-def test_preview_never_connects(client, url, monkeypatch):
+def test_preview_never_connects(client, url, monkeypatch, fs_guard):
     attempts = []
 
     def no_connect(*a, **kw):
@@ -201,26 +181,14 @@ def test_preview_never_connects(client, url, monkeypatch):
     # Start the client's event loop BEFORE blocking sockets. On Windows, creating
     # an asyncio loop opens an internal loopback socketpair via connect(); that is
     # test-harness plumbing, not the app. Only connects during the request count.
-    import builtins
-    import io
-    import os
-
-    file_reads = []
-
-    def no_open(*a, **kw):
-        file_reads.append(a)
-        raise OSError("file access blocked by test")
-
     with client:
         monkeypatch.setattr(socket.socket, "connect", no_connect)
         monkeypatch.setattr(socket.socket, "connect_ex", no_connect)
         monkeypatch.setattr(socket, "create_connection", no_connect)
         monkeypatch.setattr(socket, "getaddrinfo", no_connect)
         # file:// "fetches" read local files without any socket, so watch opens too.
-        monkeypatch.setattr(builtins, "open", no_open)
-        monkeypatch.setattr(io, "open", no_open)
-        monkeypatch.setattr(os, "open", no_open)
-        r = client.get("/api/v1/preview", params={"url": url})
+        with fs_guard() as file_reads:
+            r = client.get("/api/v1/preview", params={"url": url})
         monkeypatch.undo()
     # Recorded, not just raised: a handler that swallows OSError cannot hide an attempt.
     assert attempts == [], f"preview attempted outbound connection(s): {attempts!r}"
@@ -238,9 +206,23 @@ def test_upload_small_file_accepted(client):
 
 
 def test_upload_over_cap_by_content_length(client, settings):
-    big = b"A" * (settings.max_upload_bytes + 10)
+    # Whole body over file cap + multipart overhead: rejected before the route runs.
+    big = b"A" * (settings.max_upload_bytes + settings.multipart_overhead_bytes + 10)
     r = client.post("/upload", content=big, headers={"Content-Type": "application/octet-stream"})
     assert r.status_code == 413
+
+
+def test_upload_file_over_cap_inside_body_limit(client, settings):
+    # File itself 1 byte over the cap, body still under the overall limit: route rejects it.
+    data = b"A" * (settings.max_upload_bytes + 1)
+    r = client.post("/upload", files={"document": ("big.bin", data, "application/octet-stream")})
+    assert r.status_code == 413
+
+
+def test_upload_file_exactly_at_cap_is_accepted(client, settings):
+    data = b"A" * settings.max_upload_bytes
+    r = client.post("/upload", files={"document": ("max.bin", data, "application/octet-stream")})
+    assert r.status_code == 200
 
 
 def test_upload_over_cap_chunked_without_length(client, settings):
@@ -258,10 +240,14 @@ def test_upload_bad_content_length(client):
     assert r.status_code in (400, 413)
 
 
-def test_upload_writes_nothing_to_disk(client, tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    client.post("/upload", files={"document": ("shell.php", b"<?php system($_GET['c']); ?>", "text/plain")})
-    assert list(tmp_path.iterdir()) == []
+def test_upload_writes_nothing_to_disk(client, fs_guard, settings):
+    payload = b"<?php system($_GET['c']); ?>"
+    with fs_guard() as opened:
+        r = client.post("/upload", files={"document": ("shell.php", payload, "text/plain")})
+    assert r.status_code == 200
+    assert opened == [], f"upload opened files other than the event log: {opened!r}"
+    from pathlib import Path
+    assert b"system(" not in Path(settings.event_log_path).read_bytes()  # content never logged
 
 
 # --- API index -------------------------------------------------------------------

@@ -34,6 +34,7 @@ uses a read-only copy of it and never changes it on its own.
 | P6 | The schema has no field for detection results | Agreed: `raw_evidence_redacted.detections[]` + `tags`, with a fixed sub-shape documented in `docs/INTEGRATOR_NOTES.md` §2 | Web + integrator |
 | P7 | Dev Python (3.13) ≠ spec (3.12) | Use `python3.12` locally and the pinned 3.12 image for evidence runs | Web (here) |
 | P8 | A detailed `/health` on the attacker-facing port shows it's a honeypot (new conflict from decision Q5) | Detailed JSON only for sources in `HEALTH_ALLOWED_CIDRS`. Everyone else gets the site's normal 404 (§3.1, §6) | Web (here) |
+| P10 | *(found in Phase 3 by a redaction test)* Secret patterns began with `\b`, so a secret glued to other text (`aaaeyJ…` JWT, `mypassword=…`, `xAKIA…`) has no word boundary and **was not redacted** | Leading boundaries removed; over-redaction is the safe failure mode. Regression tests `test_secret_glued_to_text_is_redacted` | Web (here) |
 | P9 | *(found in Phase 2 container test)* Requests through the published port reach the app from the Docker gateway `172.28.0.1`. A `/16` allowlist therefore trusted every host-side request, and every host-run attack shares one source IP | Allowlists default to single `/32`s (health: `127.0.0.1/32`; simulator: `172.28.0.50/32`). **The simulator must run as a container on `lab_net` with its own fixed IP**, or attacker profiles collapse onto one IP. Written up in `docs/INTEGRATOR_NOTES.md` §4 | Web + integrator + simulator owner |
 
 ---
@@ -185,6 +186,15 @@ request**:
 | `tags` | e.g. `probe:sqli`, `owasp:A03`, `enum:sensitive_path`, `auth:bruteforce` |
 | DB-only fields (`command`, `query_type`, `database_name`, `table_names`, `rows_returned`) | `null` / `[]`. Never fabricated. |
 
+### 4.0 What is and isn't emitted (as built in Phase 3)
+- **Not emitted:** successful `GET /static/*` (page assets), and `/health` from
+  `HEALTH_ALLOWED_CIDRS` (lab polling). Failed static probes and `/health` from
+  anyone else **are** emitted.
+- `action` values: `page_view` (2xx/3xx), `route_probe` (401/403/404/405),
+  `login_attempt`, `upload_attempt`. Phase 4 adds `probe_detected:*` labels as tags.
+- Telemetry `tags` vocabulary in Phase 3: `authenticated_session`, `contains_markup`,
+  `untrusted_campaign_header`, `body_rejected`, plus detection labels from Phase 4.
+
 ### 4.1 Redaction rules (`redact.py`)
 1. **Headers:** allowlist only (`Host`, `User-Agent`, `Accept`,
    `Content-Type`, `Content-Length`, `Referer`). `Authorization`, `Cookie`,
@@ -217,7 +227,10 @@ and which field (`field: "password"`), never the value.
 ### 4.3 Request body limits
 - A global cap of 64 KiB for non-upload bodies (413 beyond). It checks both
   `Content-Length` and the size actually streamed, so it can't be bypassed
-  with chunked encoding.
+  with chunked encoding. A non-numeric `Content-Length` → 400.
+- `POST /upload`: whole body capped at 1 MiB (file) + 64 KiB (multipart
+  overhead) by the middleware; the route then rejects a file part over 1 MiB.
+  A file of exactly 1 MiB is accepted.
 - Bodies are parsed only for `application/x-www-form-urlencoded`,
   `multipart/form-data` (upload route only) and `application/json`. Anything
   else is recorded as metadata only.
@@ -337,3 +350,5 @@ The owner can reverse any decision marked "Claude" at any phase review.
 - Detection is signature-based. Encoded or obfuscated payloads beyond double URL-encoding may be missed.
 - Without TLS in the lab, the decoy can't see HTTPS-only scanners. OpenCanary is not planned.
 - Until the integrator publishes `collector/schema.py`, the local schema copy can drift from it. Phase 5 replaces it.
+- `replay` runs as a separate process, so `/health` keeps showing `degraded` and does not count replayed events until the next live delivery succeeds.
+- The spool is not replayed automatically when the collector comes back; run `python -m web_decoy.telemetry.replay`.

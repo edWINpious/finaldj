@@ -5,7 +5,9 @@ FROM python:3.12-slim@sha256:aa943ce411423c7582288f18707ff66eddcbaeb510502d747a7
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    EVENT_LOG_PATH=/data/web-events.jsonl \
+    SPOOL_PATH=/data/web-spool.jsonl
 
 WORKDIR /app
 COPY requirements.txt .

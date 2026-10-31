@@ -65,7 +65,22 @@ Web uses the TCP peer address. `X-Forwarded-For` is ignored unless `TRUST_PROXY=
 - `GET http://web-decoy:8080/health` returns detailed JSON (sensor id, collector reachability, queue depth, dropped events, spool backlog, detection counters). Field list: PLAN.md §3.1.
 - This only works from `HEALTH_ALLOWED_CIDRS` (default `127.0.0.1/32`). **Give the collector a fixed lab IP and tell the web owner**, so it can be added as a `/32`. Never the whole subnet (see §4: the gateway address would then be trusted). Other sources get a normal 404, so attackers can't tell the site is a honeypot.
 
-## 7. Requests to you
+## 7. Event vocabulary (as built, Phase 3)
+
+Sample of 11 real events from an end-to-end container run: `services/web/samples/web-events.sample.jsonl`.
+
+| Field | Values from web-01 |
+|---|---|
+| `event_type` | `http_request`, `authentication` (POST /login), `file_transfer` (POST /upload) |
+| `action` | `page_view`, `route_probe`, `login_attempt`, `upload_attempt` |
+| `outcome` | `observed`, `failed` / `succeeded` (login), `blocked` (size limit) |
+| `tags` | `authenticated_session`, `contains_markup`, `untrusted_campaign_header`, `body_rejected`; Phase 4 adds `probe:*`, `enum:*`, `auth:*` labels |
+| `session_id` | Opaque UUID, the same across one login session; **not** the cookie |
+| `raw_evidence_redacted` | `headers` (allowlisted), `query`/`form`/`json` (redacted), `body` (type + size), `upload` (name, sizes, sha256, sniffed type, `stored:false`), `detections[]` |
+
+Not emitted: successful static asset loads, and `/health` polls from `HEALTH_ALLOWED_CIDRS`.
+
+## 8. Requests to you
 
 1. Accept or reject the §2 detection shape.
 2. Confirm the lab subnet, the collector's fixed IP (§6) and the simulator's fixed IP (§4).

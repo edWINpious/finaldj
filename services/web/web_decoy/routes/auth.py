@@ -48,19 +48,24 @@ def admin(request: Request):
 
 @router.post("/login")
 async def login_submit(request: Request):
-    form = await request.form()
+    form = await request.form(max_files=0, max_fields=20)
     username = _form_str(form, "username")
     password = _form_str(form, "password")
     realm = "admin" if _form_str(form, "realm") == "admin" else "partner"
     settings = request.app.state.settings
 
-    if not _check(settings, username, password):
+    ok = _check(settings, username, password)
+    # Telemetry gets the username and the result only. The password stays here.
+    request.state.telemetry = {"auth": True, "username": username,
+                               "outcome": "succeeded" if ok else "failed", "realm": realm}
+    if not ok:
         return templates.TemplateResponse(
             request, "login.html", {"realm": realm, "error": GENERIC_ERROR}, status_code=401
         )
 
     user = fixtures.USER_BY_NAME.get(settings.decoy_user, fixtures.USERS[1001])
-    token, _ = request.app.state.sessions.create(user["id"], user["username"])
+    token, sess = request.app.state.sessions.create(user["id"], user["username"])
+    request.state.telemetry["session_id"] = sess.session_id
     resp = RedirectResponse("/portal", status_code=302)
     # No Secure flag: the lab runs plain HTTP on localhost (documented limitation).
     resp.set_cookie(COOKIE_NAME, token, httponly=True, samesite="lax", path="/", max_age=8 * 3600)

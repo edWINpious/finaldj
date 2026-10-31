@@ -18,20 +18,16 @@ def health(request: Request):
     settings = request.app.state.settings
     host = request.client.host if request.client else None
     if not ip_in(host, settings.health_allowed):
-        return nginx_error(404)  # byte-identical to an unknown path
-    # Telemetry fields are placeholders until Phase 3 wires the emitter.
+        return nginx_error(404)  # byte-identical to an unknown path; still emitted as a probe
+    request.state.telemetry = {"skip": True}  # lab/integrator polling is not attacker activity
+    stats = request.app.state.emitter.stats()
     return {
-        "status": "ok",
+        "status": stats["status"],
         "sensor_id": settings.sensor_id,
         "service": "web",
         "version": __version__,
         "uptime_s": int(time.monotonic() - request.app.state.started_at),
-        "collector": {"url": settings.collector_url, "reachable": None,
-                      "last_success": None, "last_error": None},
-        "queue": {"depth": 0, "capacity": 10000, "dropped_events": 0},
-        "spool": {"pending_events": 0},
-        "events_emitted_total": 0,
-        "detections_total": {},
-        "event_log_path": None,
+        **{k: v for k, v in stats.items() if k != "status"},
+        "telemetry_errors": request.app.state.telemetry_errors,
         "active_sessions": len(request.app.state.sessions),
     }

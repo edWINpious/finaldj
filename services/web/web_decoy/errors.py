@@ -4,6 +4,17 @@ from __future__ import annotations
 
 from fastapi.responses import HTMLResponse
 
+SECURITY_HEADERS = {
+    "Server": "nginx",
+    "Content-Security-Policy": (
+        "default-src 'self'; script-src 'none'; object-src 'none'; "
+        "base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+    ),
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "same-origin",
+}
+
 _REASONS = {
     400: "Bad Request",
     401: "Authorization Required",
