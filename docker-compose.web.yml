@@ -12,6 +12,7 @@ services:
   web-decoy:
     build: ./services/web
     image: halden-web-decoy:dev
+    restart: unless-stopped   # security fix F4: a crash or OOM must not leave the sensor down
     env_file:
       - path: ./services/web/.env
         required: false

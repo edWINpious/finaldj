@@ -94,7 +94,11 @@ def test_no_hardcoded_real_looking_secrets():
 
 def test_dockerfile_hardening():
     text = (PKG.parent / "Dockerfile").read_text()
-    assert "USER 10001" in text and "--no-proxy-headers" in text and "--no-access-log" in text
+    assert "USER 10001" in text and '"web_decoy.serve"' in text
+    serve = (PKG / "serve.py").read_text()
+    for setting in ("proxy_headers=False", "access_log=False", "server_header=False",
+                    "http=HeaderDeadlineH11Protocol", "limit_concurrency=200"):
+        assert setting in serve, setting
 
 
 def _compose(name):
@@ -111,6 +115,7 @@ def test_default_compose_is_isolated():
     assert "internal: true" in compose
     assert 'com.docker.network.bridge.inhibit_ipv4: "true"' in compose
     assert "read_only: true" in compose and "cap_drop: [ALL]" in compose
+    assert "restart: unless-stopped" in compose  # security fix F4
     assert "no-new-privileges:true" in compose
 
 

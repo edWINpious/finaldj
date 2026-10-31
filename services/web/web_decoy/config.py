@@ -50,8 +50,11 @@ class Settings:
 
     # Request limits.
     max_body_bytes: int = 64 * 1024              # all non-upload requests
-    max_upload_bytes: int = 1024 * 1024          # the uploaded file itself
+    # file + overhead must stay <= Starlette's 1 MiB spool threshold, so an upload
+    # part is never spilled to a temp file (security fix F5).
+    max_upload_bytes: int = 960 * 1024           # the uploaded file itself
     multipart_overhead_bytes: int = 64 * 1024    # boundaries + headers around the file
+    body_timeout_s: float = 15.0                 # whole request body must arrive within this (F1)
     max_sessions: int = 5000
 
     @classmethod

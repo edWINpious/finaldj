@@ -25,10 +25,7 @@ COPY web_decoy ./web_decoy
 USER 10001:10001
 EXPOSE 8080
 
-# --no-proxy-headers: never trust X-Forwarded-For (PLAN §0.1 P2)
-# --no-server-header: app sets "Server: nginx" itself
-# --no-access-log: uvicorn's access log would record raw query strings (tokens) unredacted;
-#                  the redacted telemetry log replaces it in Phase 3.
-CMD ["uvicorn", "web_decoy.app:app", "--host", "0.0.0.0", "--port", "8080", \
-     "--no-proxy-headers", "--no-server-header", "--no-access-log", \
-     "--limit-concurrency", "200", "--timeout-keep-alive", "5"]
+# web_decoy.serve runs uvicorn with: a header-completion deadline (security fix F1),
+# no proxy-header trust (PLAN P2), no server header (app sets "Server: nginx"), no access
+# log (it would hold unredacted query strings), limit-concurrency 200, keep-alive 5 s.
+CMD ["python", "-m", "web_decoy.serve"]

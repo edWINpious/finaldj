@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
@@ -57,6 +58,17 @@ _MAGIC = (
 )
 
 
+# Server-side script markers searched across the WHOLE upload (security fix F3), so a
+# real image header followed by a webshell (GIF/JPEG polyglot) is still flagged.
+# Markers are long enough that random binary data practically never matches.
+_SCRIPT_MARKERS = (
+    ("php", re.compile(rb"<\?php[\s(]|<\?=\s{0,5}\$|<script\s{1,5}language\s{0,5}=\s{0,5}[\"']?php", re.I)),
+    ("jsp", re.compile(rb"<%@\s{0,5}page\b|<%\s{0,5}(?:out|request|response|runtime)\.", re.I)),
+    ("asp", re.compile(rb"<%@\s{0,5}language\s{0,5}=|<%\s{0,5}eval\s{0,5}\(", re.I)),
+)
+_MARKER_OVERLAP = 64  # bytes carried between chunks so a marker split across chunks is seen
+
+
 def _sniff(head: bytes) -> str:
     stripped = head.lstrip()
     for sig, label in _MAGIC:
@@ -89,6 +101,8 @@ async def upload(request: Request):
     digest = hashlib.sha256()
     size = 0
     head = b""
+    tail = b""
+    markers: set[str] = set()
     too_big = False
     while chunk := await part.read(65536):
         if not head:
@@ -98,6 +112,11 @@ async def upload(request: Request):
             too_big = True
             break
         digest.update(chunk)
+        window = tail + chunk
+        for label, pattern in _SCRIPT_MARKERS:
+            if label not in markers and pattern.search(window):
+                markers.add(label)
+        tail = chunk[-_MARKER_OVERLAP:]
     await part.close()  # content discarded here
 
     file_name = _safe_filename(part.filename)
@@ -107,6 +126,7 @@ async def upload(request: Request):
         "sniffed_type": _sniff(head),
         "size_bytes": size,
         "sha256": None if too_big else digest.hexdigest(),
+        "script_markers": sorted(markers),
         "stored": False,
     }
     request.state.telemetry = {"upload": meta, "file_name": file_name,

@@ -9,6 +9,7 @@ from fastapi.responses import RedirectResponse
 
 from .. import fixtures
 from ..deps import current_session, templates
+from ..errors import nginx_error
 from ..sessions import COOKIE_NAME
 
 router = APIRouter()
@@ -46,8 +47,17 @@ def admin(request: Request):
     return RedirectResponse("/admin/login", status_code=302)
 
 
+LOGIN_CONTENT_TYPE = "application/x-www-form-urlencoded"
+
+
 @router.post("/login")
 async def login_submit(request: Request):
+    # Security fix F2: browsers submit this form URL-encoded. Accepting multipart too
+    # let input bypass the telemetry middleware's field parsing and the detectors.
+    ctype = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    if ctype != LOGIN_CONTENT_TYPE:
+        request.state.telemetry = {"auth": True, "outcome": "blocked", "action": "login_attempt"}
+        return nginx_error(400)
     form = await request.form(max_files=0, max_fields=20)
     username = _form_str(form, "username")
     password = _form_str(form, "password")

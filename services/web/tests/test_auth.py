@@ -34,7 +34,7 @@ def test_failed_login_is_generic_401(client, username, password):
 
 
 def test_missing_fields_are_401_not_422(client):
-    r = client.post("/login", data={})
+    r = client.post("/login", content=b"", headers={"Content-Type": "application/x-www-form-urlencoded"})
     assert r.status_code == 401
     assert "detail" not in r.text
 

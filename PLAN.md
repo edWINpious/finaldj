@@ -152,7 +152,7 @@ the telemetry ones):
 |---|---|---|
 | `/download?file=` | Looks up an **in-memory** dict of fake filenames. Anything else → 404 | Never touches the filesystem |
 | `/api/v1/preview?url=` | Always returns `{"status":"preview unavailable"}` | The routes module imports no HTTP client, and a test blocks sockets |
-| `/upload` (POST, multipart) | Streams with a 1 MiB cap (413 beyond), computes size, sha256 and magic-byte type, then **discards the content** | Nothing is stored, served or executed |
+| `/upload` (POST, multipart) | Caps the file at 960 KiB (413 beyond), computes size, sha256, magic-byte type and script markers anywhere in the content, then **discards the content** | Nothing is stored, served or executed |
 | Webshell paths: `/shell.php`, `/cmd.php`, `/c99.php`, `/wp-content/uploads/*.php`, `/uploads/*.jsp`, etc. | 404 | Path probe only; never maps to T1505.003 |
 | Any unknown path | 404 via catch-all handler; event still emitted | |
 
@@ -230,9 +230,12 @@ and which field (`field: "password"`), never the value.
 - A global cap of 64 KiB for non-upload bodies (413 beyond). It checks both
   `Content-Length` and the size actually streamed, so it can't be bypassed
   with chunked encoding. A non-numeric `Content-Length` → 400.
-- `POST /upload`: whole body capped at 1 MiB (file) + 64 KiB (multipart
-  overhead) by the middleware; the route then rejects a file part over 1 MiB.
-  A file of exactly 1 MiB is accepted.
+- `POST /upload`: whole body capped at 960 KiB (file) + 64 KiB (multipart
+  overhead) = 1 MiB by the middleware, so Starlette never spills the part to a
+  temp file (fix F5); the route then rejects a file part over 960 KiB.
+- Deadlines (fix F1): request headers must complete within 10 s of the first
+  byte (`web_decoy/serve.py`), and the whole body within 15 s (middleware) → 408.
+- `POST /login` accepts only `application/x-www-form-urlencoded` (fix F2).
 - Bodies are parsed only for `application/x-www-form-urlencoded`,
   `multipart/form-data` (upload route only) and `application/json`. Anything
   else is recorded as metadata only.
@@ -299,7 +302,7 @@ correlation and alerting belong to the collector, not here.
 | Detailed health leaks honeypot identity | Detailed JSON only for `HEALTH_ALLOWED_CIDRS`; everyone else gets the normal 404 | `test_routes.py`: allowlisted client gets JSON, other client gets 404 with the same body as an unknown path |
 | Path traversal | `/download` uses a dict lookup; no `open()` on request input | `../../etc/passwd` returns 404 and no host contents |
 | SSRF | No HTTP client in route modules; preview returns a canned answer | Test monkeypatches `socket.create_connection` to raise, then hits preview with `http://169.254.169.254/` |
-| Upload execution | Content discarded after hashing; 1 MiB cap | Upload a `.php` → metadata event, 413 above cap, no file on disk |
+| Upload execution | Content discarded after hashing; 960 KiB cap; never spilled to disk | Upload a `.php` → metadata event, 413 above cap, no file on disk |
 | Secret leakage | Redaction rules in §4.1 | Tests send password, cookie, Authorization and JWT values, then grep the events and JSONL for those exact strings |
 | Spoofed source IP / campaign | XFF ignored by default; campaign header gated by CIDR | Header from a non-allowlisted IP → `campaign_id=null` |
 | Resource exhaustion | Body caps, bounded queue, bounded LRU, regex length cap | Oversized body → 413; 10k-event flood doesn't block requests |
@@ -340,6 +343,25 @@ blockers, next step) and **stops for your approval**.
 | **5** Integration | Point at the integrator's collector, swap in their schema, README, demo script, network-isolation proof, status update | Events visible via the collector's `GET /api/events` and the dashboard; full suite green inside the 3.12 container. **As of 2026-10-31: isolation proof, README, demo runbook and simulator spec done; collector/schema/dashboard integration BLOCKED (nothing published by the integrator)** |
 
 ---
+
+## 8b. Focused security review (2026-10-31, security-audit skill, guidance mode)
+
+All five findings confirmed with bounded local tests, then fixed; each fix has a
+regression test in `tests/test_security_fixes.py` that fails when the fix is reverted.
+
+| # | Sev | Finding | Fix | Verified |
+|---|---|---|---|---|
+| F1 | Medium | Stalled request bodies **and** trickled request headers held uvicorn's `--limit-concurrency` slots forever; everyone then got 503 and nothing was recorded (uvicorn answers before the app runs) | Body: 15 s total deadline in the middleware → 408, event tagged `body_timeout`. Headers: `web_decoy/serve.py` subclasses uvicorn's H11 protocol with an absolute 10 s header deadline that further bytes do not reset; the image starts via `python -m web_decoy.serve` | Container: 10 trickling connections closed at 10.0 s while normal GETs returned 200; stock-uvicorn control test keeps them open |
+| F2 | Medium | Multipart `POST /login` worked but skipped the middleware's field parsing, so SQLi/XSS in login fields went undetected | `/login` accepts only URL-encoded bodies; anything else → 400, recorded as `authentication`/`blocked` | Multipart/JSON login → 400; SQLi in login always detected |
+| F3 | Low | GIF/JPEG + PHP polyglot uploads passed `W-UPL-01` (only the first 16 bytes were sniffed) | Whole upload scanned for PHP/JSP/ASP markers with chunk overlap; `script_markers` added to upload metadata | 5 polyglots flagged, marker split across a chunk boundary flagged, ~960 KiB random binary not flagged |
+| F4 | Low | No restart policy: a crash/OOM left the sensor down | `restart: unless-stopped` | Container: SIGTERM → restart count 0 → 1, running |
+| F5 | Info | Upload parts of 1–1.06 MiB were spilled by Starlette to `/tmp` (tmpfs) before rejection, contradicting "never stored" | File cap lowered to 960 KiB so file + overhead ≤ Starlette's 1 MiB spool threshold | Test asserts no `rollover()` at the maximum size |
+
+Hardening notes from the review (not vulnerabilities): behaviour-engine worst-case
+memory with >10k distinct source IPs (not reachable in the isolated lab);
+dependencies pinned by version, not hash; form keys like `pin`/`code` not
+redacted; overflow spool `.1` not replayed; any `lab_net` host can POST forged
+events to the collector (integrator, see INTEGRATOR_NOTES §8).
 
 ## 9. Decisions (answered by the web owner, 2026-10-31)
 

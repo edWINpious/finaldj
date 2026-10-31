@@ -34,6 +34,7 @@ Synthetic login: `j.miller` / `Halden#Spring26`.
 ```bash
 uvicorn web_decoy.app:app --host 127.0.0.1 --port 8081
 ```
+The container instead runs `python -m web_decoy.serve`, which adds the slow-header deadline (security fix F1).
 
 ## Containment proof
 
@@ -100,7 +101,7 @@ If you see "Wrong Python environment", the venv isn't active.
 | Normalized events reach collector **and dashboard** | Delivery proven against a throwaway mock collector only | **Blocked**: no integrator collector/dashboard yet |
 | Upload / SSRF / path traversal controls tested | `tests/test_routes.py`, `tests/test_detection_p1.py` | Met |
 | Network isolation and synthetic data documented | Containment proof above; `fixtures.py` is all synthetic | Met |
-| Tests pass | 338 passed (Python 3.12, local + in image); owner: Windows | Met |
+| Tests pass | 358 passed (Python 3.12, local + in image); owner: Windows | Met |
 
 ## Known limitations
 
@@ -108,6 +109,7 @@ If you see "Wrong Python environment", the venv isn't active.
 - Browse mode removes egress isolation (Docker can't publish ports from an internal network).
 - Detection state (brute-force/scan windows) and sessions are in memory and reset on restart.
 - Signature rules are pattern-based. Obfuscated payloads can be missed, and unusual benign input can match.
+- Security review fixes F1–F5 are applied (PLAN.md §8b). Slow clients are cut off after 10 s (headers) and 15 s (body). Uploads are capped at 960 KiB. Login accepts URL-encoded forms only.
 - `/health` stays `degraded` after a manual replay until the next live delivery succeeds. Spooled events are not auto-replayed.
 - No TLS, so the session cookie has no `Secure` flag. Lab use only.
 - Traffic sent from the host arrives from a Docker gateway IP, not a real client IP. The simulator must run on `lab_net` (PLAN.md P9).

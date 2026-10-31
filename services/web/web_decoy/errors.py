@@ -21,6 +21,7 @@ _REASONS = {
     403: "Forbidden",
     404: "Not Found",
     405: "Not Allowed",
+    408: "Request Time-out",
     413: "Request Entity Too Large",
     500: "Internal Server Error",
 }

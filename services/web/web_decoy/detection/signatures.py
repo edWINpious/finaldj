@@ -150,6 +150,9 @@ def detect_signatures(ctx) -> list[dict[str, Any]]:
             reasons.append("executable/script file extension")
         if declared.startswith("image/") and not sniffed.startswith("image/"):
             reasons.append("declared as an image but content is not")
+        script_markers = upload.get("script_markers") or []
+        if script_markers:
+            reasons.append("embedded server-side script markers (" + ", ".join(script_markers) + ")")
         if reasons:
             hit("W-UPL-01", "upload", "; ".join(reasons) + "; content was discarded, never stored or executed")
 

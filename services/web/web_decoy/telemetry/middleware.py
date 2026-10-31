@@ -12,8 +12,10 @@ Raw values never leave this function; only redacted copies are emitted.
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import json
+import time
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -120,10 +122,18 @@ class TelemetryMiddleware:
         elif declared is not None and int(declared) > cap:
             reject = 413
         body = bytearray()
+        timed_out = False
         if reject is None:
             more = True
+            # Total deadline for the whole body (security fix F1): a client that sends
+            # headers and then trickles or stalls cannot hold a worker slot forever.
+            deadline = time.monotonic() + settings.body_timeout_s
             while more:
-                message = await receive()
+                try:
+                    message = await asyncio.wait_for(receive(), max(0.0, deadline - time.monotonic()))
+                except asyncio.TimeoutError:
+                    reject, timed_out = 408, True
+                    break
                 if message["type"] == "http.disconnect":
                     break
                 body.extend(message.get("body", b""))
@@ -164,8 +174,11 @@ class TelemetryMiddleware:
                              bytes(body), session, state.get("telemetry", {}), 500, None)
                 raise
 
+        route_state = state.get("telemetry", {})
+        if timed_out:
+            route_state = {**route_state, "_body_timeout": True}
         self._record(fastapi_app, scope, settings, started, method, path, headers, raw_headers,
-                     bytes(body), session, state.get("telemetry", {}), status_holder["status"], reject)
+                     bytes(body), session, route_state, status_holder["status"], reject)
 
     @staticmethod
     async def _send_error(send, status: int) -> None:
@@ -263,7 +276,7 @@ class TelemetryMiddleware:
             else:
                 tags.append("untrusted_campaign_header")
         if reject is not None:
-            tags.append("body_rejected")
+            tags.append("body_timeout" if route.get("_body_timeout") else "body_rejected")
         for d in detections[:MAX_DETECTIONS]:
             if d.get("label") and d["label"] not in tags:
                 tags.append(d["label"])
