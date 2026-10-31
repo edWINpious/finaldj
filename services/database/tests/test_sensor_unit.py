@@ -471,3 +471,104 @@ def test_newline_username_raises_injection_detection(tmp_path):
     event, _, _ = b.build(rec)
     assert event["raw_evidence_redacted"]["detections"][0]["rule"] == "D-INJ-01"
     assert event["source_ip"] == "127.0.0.1"
+
+
+# ---- server-reported tables (audit TABLE events) --------------------------------------
+def read_line(table, conn=7, qid=100, db=DB, user="decoy_user", host="172.28.0.51"):
+    return f"20261031 14:54:45,dbhost,{user},{host},{conn},{qid},READ,{db},{table},"
+
+
+def test_read_line_parses():
+    r = parse_line(read_line("api_credentials"))
+    assert (r.operation, r.database, r.query, r.truncated) == ("READ", DB, "api_credentials", False)
+
+
+def test_server_table_reclassifies_dynamic_sql(tmp_path):
+    b = builder(tmp_path)
+    b.build(parse_line(read_line("api_credentials")))
+    event, _, _ = b.build(parse_line(line("EXECUTE IMMEDIATE @q")))
+    assert event["action"] == "sensitive_access" and event["table_names"] == ["api_credentials"]
+    assert "db:server_resolved_tables" in event["tags"]
+
+
+def test_server_table_counts_toward_adaptive_rules(tmp_path):
+    b = builder(tmp_path)
+    b.build(parse_line(read_line("api_credentials")))
+    b.build(parse_line(line("EXECUTE IMMEDIATE @q")))
+    assert b.state.tracker("decoy_user@172.28.0.51").table_hits == {"api_credentials": 1}
+
+
+def test_table_line_for_another_query_id_is_not_applied(tmp_path):
+    b = builder(tmp_path)
+    b.build(parse_line(read_line("api_credentials", qid=99)))
+    event, _, _ = b.build(parse_line(line("SELECT 1", qid=100)))
+    assert event["table_names"] == [] and event["action"] == "client_noise"
+
+
+def test_optimizer_statistics_are_ignored(tmp_path):
+    b = builder(tmp_path)
+    b.build(parse_line(read_line("routes")))
+    b.build(parse_line(read_line("table_stats", db="mysql")))
+    event, _, _ = b.build(parse_line(line("SELECT * FROM routes LIMIT 1")))
+    assert event["table_names"] == ["routes"]
+
+
+def test_forged_read_line_without_a_login_counts_for_nothing(tmp_path):
+    b = builder(tmp_path)
+    event, _, _ = b.build(parse_line(read_line("api_credentials", conn=555, host="9.9.9.9")))
+    assert event is None and b.opened == {}
+
+
+def test_handler_alias_is_replaced_by_the_real_table(tmp_path):
+    b = builder(tmp_path)
+    b.build(parse_line(read_line("api_credentials")))
+    event, _, _ = b.build(parse_line(line("HANDLER h READ FIRST")))
+    assert event["table_names"] == ["api_credentials"] and event["action"] == "sensitive_access"
+
+
+# ---- found on the first real container run ----------------------------------------------
+def test_decoy_user_on_the_local_socket_is_not_internal(tmp_path):
+    b = builder(tmp_path)
+    assert not b.is_internal(parse_line(line("SELECT COUNT(*) FROM shipments", host="localhost")))
+
+
+def test_listed_socket_accounts_are_internal_and_others_are_not(tmp_path):
+    b = EventBuilder(Settings(data_dir=str(tmp_path), internal_accounts=frozenset(
+        {("healthcheck", "localhost"), ("root", "localhost"), ("boot", "")})), RULES, SensorState(str(tmp_path)))
+    assert b.is_internal(parse_line(line(user="healthcheck", host="localhost")))
+    assert b.is_internal(parse_line(line(user="root", host="localhost")))
+    assert not b.is_internal(parse_line(line(user="someone", host="localhost")))
+
+
+def test_real_bootstrap_line_parses_as_internal_account(tmp_path):
+    rec = parse_line("20261031 17:07:09,0c22e0e8c0a8,boot,,3,1,QUERY,mysql,'CREATE OR REPLACE VIEW x',0")
+    assert (rec.user, rec.host) == ("boot", "")
+    b = EventBuilder(Settings(data_dir=str(tmp_path), internal_accounts=frozenset({("boot", "")})), RULES,
+                     SensorState(str(tmp_path)))
+    assert b.is_internal(rec)
+
+
+def test_compose_lists_every_internal_account_and_never_the_decoy():
+    compose = (Path(__file__).resolve().parents[3] / "docker-compose.yml").read_text(encoding="utf-8")
+    value = next(ln.split(":", 1)[1].strip() for ln in compose.splitlines() if ln.strip().startswith("INTERNAL_ACCOUNTS:"))
+    accounts = set(value.split(","))
+    assert {"deception_ctrl@172.29.0.21", "root@localhost", "healthcheck@localhost", "boot@"} <= accounts
+    assert not [a for a in accounts if a.startswith("decoy_user")]
+
+
+@pytest.mark.parametrize("sql", ["SELECT ',1,2,READ,x,y' FROM api_credentials", "SELECT ',9,9,QUERY,d,z' FROM api_credentials",
+                                 "SELECT ',1,0,CONNECT,,,0' FROM api_credentials", "SELECT 'a,b,c,1,2,DROP,x,y'"])
+def test_query_text_cannot_rewrite_the_line_it_is_on(sql):
+    r = parse_line(line(sql, conn=7, qid=100))
+    assert (r.user, r.host, r.connection_id, r.query_id, r.operation) == ("decoy_user", "172.28.0.51", 7, 100, "QUERY")
+    assert r.query == sql and r.retcode == 0 and not r.truncated
+
+
+def test_spoof_literal_still_counts_as_a_sensitive_read(tmp_path):
+    event, _, _ = builder(tmp_path).build(parse_line(line("SELECT ',1,2,READ,x,y' FROM api_credentials")))
+    assert event["action"] == "sensitive_access" and event["username"] == "decoy_user"
+
+
+def test_comma_username_on_a_login_line_still_parses_from_the_right():
+    r = parse_line("20261031 14:54:45,h,a,1.1.1.1,5,5,QUERY,d,'x',0,172.28.0.51,8,0,FAILED_CONNECT,,,1045")
+    assert r.operation == "FAILED_CONNECT" and r.host == "172.28.0.51" and r.connection_id == 8

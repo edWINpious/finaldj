@@ -23,6 +23,9 @@ services:
     environment:
       MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:?set in .env}
       MARIADB_DATABASE: transnova_logistics
+      # Time zone tables are unused here, and their bulk load is not worth risking under the
+      # 64K max_allowed_packet.
+      MARIADB_INITDB_SKIP_TZINFO: "1"
       DECOY_DB_PASSWORD: ${DECOY_DB_PASSWORD:?set in .env}
       CONTROLLER_DB_PASSWORD: ${CONTROLLER_DB_PASSWORD:?set in .env}
       CONTROLLER_HOST: 172.29.0.21
@@ -65,7 +68,9 @@ services:
       DB_PORT: "3306"
       DB_DESTINATION_IP: 172.28.0.30
       CONTROLLER_DB_PASSWORD: ${CONTROLLER_DB_PASSWORD:?set in .env}
-      INTERNAL_ACCOUNTS: deception_ctrl@172.29.0.21
+      # user@host pairs that are our own traffic. boot@ (empty host) is MariaDB's first-boot
+      # bootstrap. Never list decoy_user here.
+      INTERNAL_ACCOUNTS: deception_ctrl@172.29.0.21,root@localhost,healthcheck@localhost,mariadb.sys@localhost,boot@
     volumes:
       - db-logs:/var/log/mysql:ro
       - db-sensor-data:/data

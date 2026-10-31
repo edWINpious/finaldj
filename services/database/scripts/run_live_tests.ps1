@@ -1,10 +1,12 @@
-# Rebuilds a clean native lab, then runs the live end-to-end tests with a genuine MySQL client.
+# Rebuilds a clean native lab, then runs the live tests with a genuine MySQL client.
 # Works without Docker. Deletes only -WorkDir (the disposable lab it created).
 #
 #   .\services\database\scripts\run_live_tests.ps1 -MariaDbHome C:\path\mariadb-11.4.9-winx64 -WorkDir C:\path\lab
+#   ... -Suite audit     runs the readiness audit instead of the end-to-end suite
 param(
     [Parameter(Mandatory)] [string] $MariaDbHome,
     [Parameter(Mandatory)] [string] $WorkDir,
+    [ValidateSet("live", "audit")] [string] $Suite = "live",
     [string] $MysqlClient = "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe",
     [string] $Python = "$PSScriptRoot\..\..\..\.venv-db\Scripts\python.exe"
 )
@@ -22,4 +24,6 @@ if (-not $?) { throw "native lab failed to start" }
 
 $env:LIVE_MYSQL_CLIENT = $MysqlClient
 $env:LIVE_AUDIT_LOG = "$WorkDir\logs\server_audit.log"
-& $Python -m pytest "$PSScriptRoot\..\tests\live" -v -p no:cacheprovider --tb=short
+$env:LIVE_MARIADB_HOME = $MariaDbHome
+$env:LIVE_WORKDIR = $WorkDir
+& $Python -m pytest "$PSScriptRoot\..\tests\$Suite" -v -p no:cacheprovider --tb=short

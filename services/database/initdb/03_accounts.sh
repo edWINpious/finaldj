@@ -1,6 +1,8 @@
 #!/bin/bash
 # Runs once, on first boot only, from docker-entrypoint-initdb.d.
-set -euo pipefail
+# Without the executable bit the entrypoint sources this file, so its shell options would
+# leak into the entrypoint. `set -u` there can abort first boot, so it stays out.
+set -eo pipefail
 
 : "${DECOY_DB_PASSWORD:?DECOY_DB_PASSWORD must be set}"
 : "${CONTROLLER_DB_PASSWORD:?CONTROLLER_DB_PASSWORD must be set}"

@@ -13,8 +13,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from .audit import AuditRecord
-from .classify import Classification, classify, outcome_for, redact
+from .audit import TABLE_OPERATIONS, AuditRecord
+from .classify import Classification, apply_server_tables, classify, outcome_for, redact
 from .config import Settings, ip_in
 from .risk import Assessment, assess_auth_failure, assess_query, severity_for
 from .state import SensorState, SessionProfile, SourceTracker
@@ -29,6 +29,7 @@ RULE_IDS = {"sensitive_access": "D-SENS-01", "adaptive_decoy_access": "D-ADAPT-0
             "modification_attempt": "D-MOD-01", "schema_change_attempt": "D-DDL-01", "privilege_attempt": "D-PRIV-01",
             "file_access_attempt": "D-FILE-01", "reconnaissance": "D-RECON-01", "authentication_failed": "D-AUTH-01",
             "data_exploration": "D-DATA-01", "log_injection_attempt": "D-INJ-01", "log_tampering": "D-INJ-02"}
+OPTIMIZER_TABLES = {"mysql.table_stats", "mysql.column_stats", "mysql.index_stats"}
 ALERT_SEVERITIES = {"MEDIUM", "HIGH", "CRITICAL"}
 CONFIDENCE = {"LOW": "low", "MEDIUM": "medium", "HIGH": "high", "CRITICAL": "high"}
 
@@ -42,14 +43,14 @@ def event_id_for(session_id: str, rec: AuditRecord) -> str:
 class EventBuilder:
     def __init__(self, settings: Settings, rules: dict[str, Any], state: SensorState) -> None:
         self.s, self.rules, self.state = settings, rules, state
+        self.opened: dict[int, tuple[int, set[str]]] = {}  # connection id -> (query id, tables)
 
     def is_internal(self, rec: AuditRecord) -> bool:
         """Our own traffic. A failed login is never internal: it may be someone guessing."""
         if rec.operation == "FAILED_CONNECT":
             return False
-        # With skip_name_resolve a network client is always an IP, so "localhost" can only be
-        # the image's own init scripts and health checks over the local socket.
-        return rec.host == "localhost" or (rec.user, rec.host) in self.s.internal_accounts
+        # Accounts only, never a whole host: decoy_user on the local socket is still the decoy.
+        return (rec.user, rec.host) in self.s.internal_accounts
 
     def _envelope(self, rec: AuditRecord, session: SessionProfile, event_type: str, action: str, outcome: str,
                   evidence: dict[str, Any], tags: list[str], **fields: Any) -> dict[str, Any]:
@@ -92,7 +93,11 @@ class EventBuilder:
         known = self.state.sessions.get(rec.connection_id)
         if rec.operation == "DISCONNECT" and known is not None and not known.open:
             return None, None, key  # the close that follows a failed login is not a new session
-        fresh = rec.operation in ("CONNECT", "FAILED_CONNECT")
+        fresh = rec.operation in ("CONNECT", "CHANGEUSER", "FAILED_CONNECT")
+        if rec.operation in TABLE_OPERATIONS:
+            if self._bound(rec):  # no matching login: a forged line, so it counts for nothing
+                self._note_table(rec)
+            return None, None, key
         if rec.operation in ("QUERY", "DISCONNECT") and not self._bound(rec):
             return self._unbound(rec), None, key
         session = self.state.session(rec.connection_id, rec.host, rec.user, rec.timestamp, self.s.sensor_id, fresh)
@@ -109,6 +114,18 @@ class EventBuilder:
             event, c = self._query(rec, session, tracker)
             return event, c, key
         return None, None, key
+
+    def _note_table(self, rec: AuditRecord) -> None:
+        """READ lines precede the QUERY line of the same query id."""
+        name = rec.query.lower() if rec.database.lower() == self.rules["database"] \
+            else f"{rec.database}.{rec.query}".lower()
+        if name in OPTIMIZER_TABLES:
+            return  # the server reading its own statistics, not the attacker
+        query_id, tables = self.opened.get(rec.connection_id, (None, set()))
+        if query_id != rec.query_id:
+            tables = set()
+        tables.add(name)
+        self.opened[rec.connection_id] = (rec.query_id, tables)
 
     def _bound(self, rec: AuditRecord) -> bool:
         """Every real statement belongs to a connection that logged in as that user and host.
@@ -168,6 +185,9 @@ class EventBuilder:
         if campaign and ip_in(rec.host, self.s.simulator_cidrs):
             session.campaign_id = campaign.group(1)
         c = classify(rec.query, rec.retcode, rec.database, self.rules)
+        query_id, opened = self.opened.pop(rec.connection_id, (None, set()))
+        if query_id == rec.query_id and opened:
+            apply_server_tables(c, rec.query, rec.retcode, opened, self.rules)
         outcome = outcome_for(rec.retcode)
         if c.category == "file_access_attempt" and outcome == "succeeded":
             # LOAD_FILE returns NULL with retcode 0 when the account has no FILE privilege.

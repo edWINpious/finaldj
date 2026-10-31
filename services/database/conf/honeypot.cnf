@@ -14,7 +14,9 @@ max_connect_errors = 100000   # do not silently host-block a brute force we want
 plugin_load_add = server_audit
 server_audit    = FORCE_PLUS_PERMANENT   # cannot be unloaded at runtime
 server_audit_logging          = ON
-server_audit_events           = CONNECT,QUERY
+# TABLE adds a READ line naming each table the server really opened. It is the only record of
+# what EXECUTE IMMEDIATE ran: for dynamic SQL the QUERY line shows just the wrapper.
+server_audit_events           = CONNECT,QUERY,TABLE
 server_audit_output_type      = FILE
 server_audit_file_path        = /var/log/mysql/server_audit.log
 server_audit_file_rotate_size = 50M

@@ -16,17 +16,20 @@ from typing import Any
 import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ParseError, SqlglotError, TokenError
+from sqlglot.tokens import TokenType
 
 logging.getLogger("sqlglot").setLevel(logging.ERROR)  # hostile SQL would otherwise flood the log
 
 DENIED_CODES = {1044, 1045, 1142, 1143, 1227, 1370}
-READ_VERBS = {"SELECT", "WITH", "VALUES", "TABLE"}
-ENUM_VERBS = {"SHOW", "DESCRIBE", "DESC", "EXPLAIN", "HELP"}
+READ_VERBS = {"SELECT", "WITH", "VALUES", "TABLE", "DO", "HANDLER"}
+ENUM_VERBS = {"SHOW", "DESCRIBE", "DESC", "EXPLAIN", "ANALYZE", "HELP"}
 SESSION_VERBS = {"USE", "SET", "BEGIN", "COMMIT", "ROLLBACK", "START", "KILL", "PING"}
-DML_VERBS = {"INSERT", "UPDATE", "DELETE", "REPLACE", "TRUNCATE", "MERGE", "CALL", "DO"}
+DML_VERBS = {"INSERT", "UPDATE", "DELETE", "REPLACE", "TRUNCATE", "MERGE", "CALL"}
 DDL_VERBS = {"CREATE", "DROP", "ALTER", "RENAME"}
 PRIV_VERBS = {"GRANT", "REVOKE", "FLUSH", "INSTALL", "UNINSTALL"}
-TABLE_LEAD_INS = {"FROM", "JOIN", "INTO", "UPDATE", "TABLE", "DESCRIBE", "DESC", "EXPLAIN", "COLUMNS", "FIELDS"}
+TABLE_LEAD_INS = {"FROM", "JOIN", "INTO", "UPDATE", "TABLE", "DESCRIBE", "DESC", "EXPLAIN", "COLUMNS", "FIELDS",
+                  "HANDLER"}
+NOT_TABLE_NAMES = {"from", "in", "outfile", "dumpfile", "select", "dual"}
 FILE_PATTERN = re.compile(r"\b(load_file\s*\(|into\s+(out|dump)file\b|load\s+(data|xml)\b)", re.I)
 CLIENT_NOISE = re.compile(
     r"^\s*(select\s+@@version_comment\s+limit\s+1|select\s+database\(\)|select\s+\$\$|"
@@ -34,7 +37,11 @@ CLIENT_NOISE = re.compile(
     re.I | re.S,
 )
 FINGERPRINT = re.compile(r"\b(version|user|current_user|session_user|system_user)\s*\(", re.I)
-EXEC_COMMENT = re.compile(r"/\*[!M]")
+EXEC_COMMENT = re.compile(r"/\*M?!")
+# The server runs the text inside these comments, so the classifier must read it too.
+_EXEC_BODY = re.compile(r"/\*M?!\d*(.*?)\*/", re.S)
+_SET_STATEMENT = re.compile(r"^\s*SET\s+STATEMENT\s+.*?\sFOR\s+", re.I | re.S)
+_SHOW_NO_TABLE = re.compile(r"\s*show\s+((full\s+)?tables|table\s+status|open\s+tables)\b", re.I)
 _WORD = re.compile(r"[A-Za-z_]+")
 
 
@@ -57,9 +64,18 @@ def _tokens(sql: str) -> list[Any]:
         return []
 
 
+def _normalize(sql: str) -> str:
+    """What the server will actually execute, for wrappers that change the leading keyword."""
+    previous = None
+    while previous != sql:
+        previous, sql = sql, _EXEC_BODY.sub(r" \1 ", sql)
+    return _SET_STATEMENT.sub("", sql)
+
+
 def _first_keyword(sql: str, tokens: list[Any]) -> str:
-    if tokens:
-        return tokens[0].text.upper()
+    for token in tokens:
+        if token.text != "(":  # (SELECT ...) is still a SELECT
+            return token.text.upper()
     m = _WORD.search(sql)
     return m.group(0).upper() if m else ""
 
@@ -73,6 +89,7 @@ def _name(db: str | None, table: str, default_db: str) -> str:
 
 def _tables_from_tokens(tokens: list[Any], default_db: str) -> list[str]:
     found: list[str] = []
+    tokens = [t for t in tokens if t.token_type != TokenType.STRING]  # a literal is never a table
     i = 0
     while i < len(tokens):
         if tokens[i].text.upper() in TABLE_LEAD_INS and i + 1 < len(tokens):
@@ -80,12 +97,15 @@ def _tables_from_tokens(tokens: list[Any], default_db: str) -> list[str]:
             if tokens[j].text.upper() in ("IF", "EXISTS", "NOT"):  # DROP TABLE IF EXISTS x
                 while j < len(tokens) and tokens[j].text.upper() in ("IF", "EXISTS", "NOT"):
                     j += 1
+            if j < len(tokens) and tokens[i].text.upper() in ("COLUMNS", "FIELDS") \
+                    and tokens[j].text.upper() in ("FROM", "IN"):  # SHOW COLUMNS IN x
+                j += 1
             if j < len(tokens):
                 name = tokens[j].text
                 db = None
                 if j + 2 < len(tokens) and tokens[j + 1].text == ".":
                     db, name = name, tokens[j + 2].text
-                if name and name not in ("(", "*", ",") and re.fullmatch(r"[\w$]+", name):
+                if name and name.lower() not in NOT_TABLE_NAMES and re.fullmatch(r"[\w$]+", name):
                     found.append(_name(db, name, default_db))
         i += 1
     return list(dict.fromkeys(found))
@@ -95,13 +115,15 @@ def classify(sql: str, retcode: int, default_db: str, rules: dict[str, Any]) -> 
     default_db = (default_db or rules["database"]).lower()
     if not sql.strip():
         return Classification("UNKNOWN", "unknown")
+    executable_comment = bool(EXEC_COMMENT.search(sql))
+    sql = _normalize(sql)
     if CLIENT_NOISE.match(sql):
         return Classification("SELECT" if sql.lstrip()[:6].upper() == "SELECT" else "SET", "client_noise", parsed=True)
 
     tokens = _tokens(sql)
     verb = _first_keyword(sql, tokens)
     c = Classification(query_type=verb or "UNKNOWN", category="unknown")
-    if EXEC_COMMENT.search(sql):
+    if executable_comment:
         c.tags.append("sql:executable_comment")
 
     tree = None
@@ -113,14 +135,16 @@ def classify(sql: str, retcode: int, default_db: str, rules: dict[str, Any]) -> 
         c.parsed = True
         cte_names = {cte.alias.lower() for cte in tree.find_all(exp.CTE)}
         tables = [_name(t.db, t.name, default_db) for t in tree.find_all(exp.Table)
-                  if t.name and t.name.lower() not in cte_names]
+                  if t.name and t.name.lower() not in cte_names and t.name.lower() != "dual"]
         c.tables = list(dict.fromkeys(tables))
         c.has_join = tree.find(exp.Join) is not None
         c.has_star = tree.find(exp.Star) is not None
         if isinstance(tree, exp.Select):
             c.unbounded = tree.args.get("limit") is None and tree.args.get("where") is None and bool(c.tables)
-    if not c.tables and verb not in READ_VERBS:
+    if not c.tables:
         c.tables = _tables_from_tokens(tokens, default_db)
+    if _SHOW_NO_TABLE.match(sql):
+        c.tables = []  # SHOW TABLES FROM x names a database
 
     if c.has_join:
         c.tags.append("sql:join")
@@ -132,6 +156,20 @@ def classify(sql: str, retcode: int, default_db: str, rules: dict[str, Any]) -> 
         c.tags.append("sql:syntax_error")
 
     c.category = _category(sql, verb, c, retcode, rules)
+    return c
+
+
+def apply_server_tables(c: Classification, sql: str, retcode: int, server_tables: set[str],
+                        rules: dict[str, Any]) -> Classification:
+    """Merge the tables MariaDB says it opened. They outrank parsing, because dynamic SQL hides
+    the real table from the statement text (EXECUTE IMMEDIATE CONCAT('...', '...'))."""
+    extra = sorted(server_tables - set(c.tables))
+    if c.query_type == "HANDLER":
+        c.tables = sorted(server_tables)  # HANDLER h READ names an alias, not the table
+    elif extra:
+        c.tables = c.tables + extra
+        c.tags.append("db:server_resolved_tables")
+    c.category = _category(_normalize(sql), c.query_type, c, retcode, rules)
     return c
 
 
@@ -153,7 +191,13 @@ def _category(sql: str, verb: str, c: Classification, retcode: int, rules: dict[
         return "modification_attempt"
     if verb in SESSION_VERBS:
         return "session_control"
-    if verb in READ_VERBS or verb in ENUM_VERBS:
+    if retcode == 1064:
+        return "unknown"  # the server never ran it
+    if verb == "HANDLER" and not denied and not re.search(r"\bread\b", sql, re.I):
+        return "session_control"  # OPEN and CLOSE return no rows; READ does
+    # Any other statement naming a table is treated as a read of it, so an unlisted verb
+    # such as CHECKSUM TABLE cannot sidestep the sensitive-table logic.
+    if verb in READ_VERBS or verb in ENUM_VERBS or tables:
         if denied:
             return "restricted_access"
         if tables & adaptive:

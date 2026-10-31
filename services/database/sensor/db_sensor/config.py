@@ -69,7 +69,7 @@ class Settings:
             destination_ip=e.get("DB_DESTINATION_IP") or None,
             internal_accounts=_accounts(e.get(
                 "INTERNAL_ACCOUNTS",
-                "deception_ctrl@172.29.0.21,root@localhost,healthcheck@localhost,mariadb.sys@localhost")),
+                "deception_ctrl@172.29.0.21,root@localhost,healthcheck@localhost,mariadb.sys@localhost,boot@")),
             simulator_cidrs=tuple(c.strip() for c in e.get("SIMULATOR_SOURCE_CIDRS", "172.28.0.50/32").split(",")
                                   if c.strip()),
             adaptive_enabled=e.get("ADAPTIVE_ENABLED", "1").lower() in ("1", "true", "yes", "on"),

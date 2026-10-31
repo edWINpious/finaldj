@@ -21,10 +21,19 @@ _LINE = re.compile(
     r"PROXY_CONNECT|READ|WRITE|CREATE|ALTER|DROP|RENAME),(?P<rest>.*)$",
     re.DOTALL,
 )
+# Statement lines come from a logged-in account, whose name has no comma, so they are anchored
+# from the left. _LINE's greedy username would otherwise run into attacker-chosen query text:
+# SELECT ',1,2,READ,x,y' made a real statement parse as a READ of a table called x.
+_STATEMENT = re.compile(
+    r"^(?P<ts>\d{8} \d{2}:\d{2}:\d{2}),(?P<server>[^,]*),(?P<user>[^,]*),(?P<host>[^,]*),"
+    r"(?P<conn>\d+),(?P<qid>\d+),(?P<op>QUERY|READ|WRITE|CREATE|ALTER|DROP|RENAME),(?P<rest>.*)$",
+    re.DOTALL,
+)
 _PREFIX = re.compile(r"^\d{8} \d{2}:\d{2}:\d{2},")
 _TAIL = re.compile(r",\d+,\d+,(FAILED_CONNECT|CONNECT|DISCONNECT),[^,]*,,\d+$")
 _RETCODE = re.compile(r",(\d+)$")
 QUERY_LOG_LIMIT = 131072  # server_audit_query_log_limit in conf/honeypot.cnf
+TABLE_OPERATIONS = frozenset({"READ", "WRITE", "CREATE", "ALTER", "DROP", "RENAME"})
 _UNESCAPE = re.compile(r"\\(.)", re.DOTALL)
 _ESC = {"n": "\n", "r": "\r", "t": "\t", "\\": "\\", "'": "'"}
 
@@ -85,10 +94,18 @@ class LineAssembler:
 
 def parse_line(line: str) -> AuditRecord | None:
     """Returns None for a line that does not match; the caller keeps it as malformed."""
-    m = _LINE.match(line)
+    # A login tail wins: that is the one line type where the username is attacker-chosen.
+    m = (None if _TAIL.search(line) else _STATEMENT.match(line)) or _LINE.match(line)
     if not m:
         return None
     rest = m.group("rest")
+    if m.group("op") in TABLE_OPERATIONS:  # READ,db,table, has no return code
+        database, _, table = rest.partition(",")
+        return AuditRecord(
+            timestamp=datetime.strptime(m.group("ts"), "%Y%m%d %H:%M:%S").replace(tzinfo=timezone.utc),
+            server=m.group("server"), user=m.group("user"), host=m.group("host"),
+            connection_id=int(m.group("conn")), query_id=int(m.group("qid")), operation=m.group("op"),
+            database=database, query=table.rstrip(","), retcode=0, truncated=False, raw=line)
     retcode = 0
     tail = _RETCODE.search(rest)
     truncated = False

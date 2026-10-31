@@ -120,11 +120,14 @@ exists. Table-level grants take effect on the attacker's next statement, with no
 | Client IP on each line | Yes | Only on the connect line | Failed logins only |
 | Server return code | **Yes** | No | No |
 | Failed logins | Yes (`FAILED_CONNECT`, 1045) | Yes | Yes, at `log_warnings=4` |
+| Tables the server really opened | **Yes** (`READ` lines) | No | No |
 | Client source port | No | No | No |
 | Rows returned | No | No | No |
 
 The audit plugin is the sensor's only parsed source, because the return code is what separates an
-attempt from a success. The general and error logs stay on the volume as raw evidence to show
+attempt from a success. `READ` lines name each table the server opened, and they are merged into
+the classification: `EXECUTE IMMEDIATE CONCAT('SELECT * FROM api_', 'credentials')` hides the table
+from its own text, and only the server knows what it read. The general and error logs stay on the volume as raw evidence to show
 judges. HANDOFF_FINAL.md asked us to prove native audit capture before relying on it: the
 plugin ships in the official packages and was verified on 11.4.9.
 
@@ -152,8 +155,8 @@ exponential backoff, and deduplication at the collector on `event_id`. IDs are d
 line, so re-reading a line after a crash cannot create a second event.
 
 **Internal traffic:** statements are excluded only when username AND client host both match
-`INTERNAL_ACCOUNTS`, or the host is the local socket. A login as `deception_ctrl` from anywhere else
-is reported as attacker activity, and a failed login is never excluded. The raw log still keeps the
+`INTERNAL_ACCOUNTS`. A login as `deception_ctrl` from anywhere else is reported as attacker activity,
+`decoy_user` is reported even on the local socket, and a failed login is never excluded. The raw log still keeps the
 controller's statements. This is what stops the SOC's own queries creating alerts.
 
 ## 8. Event format
@@ -255,7 +258,7 @@ password is in the database container's environment during first boot. The optio
 
 ### Hardening found by testing against the real server
 
-Three problems appeared only on real MariaDB and would not show up in a mock:
+These problems appeared only on real MariaDB and would not show up in a mock:
 
 1. **Audit log injection, no password needed.** MariaDB writes login usernames unescaped, so a
    username containing a newline creates a fake audit line. The sensor now rejoins split records,
@@ -265,6 +268,17 @@ Three problems appeared only on real MariaDB and would not show up in a mock:
    have pushed `FROM api_credentials` out of the log. `max_allowed_packet=64K` with a 128K log
    limit means no statement can be cut, even after escaping doubles it.
 3. **A password leak through escaping.** Redaction missed audit-escaped quotes in the raw line.
+4. **Disguised reads.** `(SELECT ...)`, `/*!50000 SELECT ... */`, `HANDLER ... READ`, `... INTO @x`
+   and similar forms returned real rows while being reported as LOW and not counting toward
+   adaptive rules. The classifier now reads what the server executes, and any other statement that
+   names a table is treated as a read of it.
+5. **Dynamic SQL.** `EXECUTE IMMEDIATE` logs only the wrapper. Audit `TABLE` events close this.
+6. **Socket traffic and bootstrap (found on the first Docker run).** A blanket `localhost` filter
+   hid `decoy_user` on the socket, and MariaDB's `boot` user (empty host) raised false tampering
+   events. Internal traffic is now an explicit account list.
+7. **Query text rewriting its own log line.** `SELECT ',1,2,READ,x,y' FROM api_credentials` returned
+   rows and produced no event, because the parser's username match ran into the query text.
+   Statement lines are now anchored from the left.
 
 ## 13. Setup
 
@@ -280,8 +294,6 @@ docker compose exec db-attacker mariadb -h database-honeypot -u decoy_user -p tr
 
 Dashboard: <http://127.0.0.1:8501>. Collector health: <http://127.0.0.1:8000/health>.
 Stop `docker-compose.web.yml` first: both use subnet 172.28.0.0/16.
-
-**This path has not been run.** See section 16.
 
 ### Without Docker (tested on Windows 11)
 
@@ -343,9 +355,14 @@ using the genuine MySQL 8.0.43 command-line client from source address 127.0.0.2
 
 | Suite | Result |
 |---|---|
-| Unit: sensor and collector (`tests/`) | **82 passed** |
+| Docker stack: genuine SQL over the socket and over `lab_net`, confirmed at the collector | Pass |
+| Docker isolation from `db-attacker`: decoys reachable; collector, management network and internet blocked | Pass |
+| Unit: sensor and collector (`tests/`) | **122 passed** |
 | Live end-to-end (`tests/live/`) | **44 passed** |
+| Readiness audit (`tests/audit/`): the 20 checks, verified against MariaDB's raw logs | **104 passed** |
 | Team web decoy suite (unchanged code) | **359 passed** |
+| Planted bugs (outcome, controller filter, repeated grant) | All 3 caught by the audit |
+| `03_accounts.sh` under Git Bash, sourced as the entrypoint would | Passed; bad and missing passwords refused |
 | Dashboard in a real browser | Empty state, all views, charts, auto-refresh verified |
 | Web decoy to collector, live traffic | 4 real events; `W-SQLI-01`, `W-ENUM-01` and `X-CORR-01` alerts raised |
 | `docker compose config` | Both compose files valid |
@@ -360,13 +377,14 @@ using the genuine MySQL 8.0.43 command-line client from source address 127.0.0.2
 | 6 Adaptive deception | Pass | All 4 scenarios; 8 of 8 tables revealed; follow-ups captured; no duplicate grants |
 | 7 SOC integration | Pass | Events and alerts in collector and dashboard; restart lost nothing and duplicated nothing |
 | 8 Risk and classification | Pass | Reasons listed; routine SELECT is LOW with no ATT&CK |
-| Docker build, startup and network isolation | **NOT RUN** | Docker Desktop cannot start on this PC |
+| Docker build, startup and network isolation | Pass | See the Docker rows in the table above |
 
 Rerun:
 
 ```powershell
 .\.venv-db\Scripts\python -m pytest services\database\tests -q --ignore=services\database\tests\live
 .\services\database\scripts\run_live_tests.ps1 -MariaDbHome C:\lab\mariadb-11.4.9-winx64 -WorkDir C:\lab\test
+.\services\database\scripts\run_live_tests.ps1 -MariaDbHome C:\lab\mariadb-11.4.9-winx64 -WorkDir C:\lab\test -Suite audit
 ```
 
 `run_live_tests.ps1` deletes and rebuilds `-WorkDir`. Stop the native stack first, and keep this
@@ -374,9 +392,15 @@ folder separate from your demo folder.
 
 ## 16. Known limitations
 
-- **The Docker path is unverified.** Dockerfiles and compose validate, but no image was built here.
-  Check first: first-boot init, log volume permissions (uid 999), the `cap_drop` list on MariaDB,
-  and the three new `inhibit_ipv4` networks.
+- **Docker deployment has now been run** (2026-10-31): first boot, the audit plugin, log volume
+  permissions, the sensor, delivery to the collector and network isolation all work. The 104-check
+  audit itself still runs natively, not against the containers. `log_error` writes to a file, so a
+  boot failure may not appear in `docker compose logs`: look in the `db-logs` volume.
+- `source_ip` is `localhost` for clients on the MariaDB socket, such as `docker exec ... mariadb`.
+  That is what the server recorded, but it is not an attacker's address. Use `db-attacker` for demos.
+- **A careful attacker can tell logging is on.** `SHOW VARIABLES LIKE 'server_audit%'` and
+  `SHOW PLUGINS` need no privilege, so they cannot be hidden. Such queries are captured.
+- `EXPLAIN` and `DESCRIBE` of a sensitive table count as sensitive access though they return no rows.
 - **Reveals are account-wide.** MariaDB grants belong to an account, so a reveal triggered by one
   source applies to everyone using `decoy_user`. Rules still track each source separately.
 - **Log forgery is reduced, not eliminated.** A patient attacker could forge a login line and later
@@ -404,4 +428,5 @@ folder separate from your demo folder.
 | No events arrive | Check `docker compose logs db-sensor`; if the audit log cannot be read, check the volume ownership (uid 999) |
 | A table was not revealed | Rules count successful reads only. Check `GET /api/adaptations`, and `details.sessions` in `GET /api/sensors` |
 | Events show `log_tampering` after a reset | Clients connected before the reset must reconnect |
+| Native only: `server_audit.log.1` not created after asking for a rotation | Windows blocks the rename while the sensor reads the file. MariaDB keeps writing to the same file and nothing is lost; the next rotation works |
 | `events_stored` not growing but sensor is OK | Check `spool_pending` on the Database Honeypot tab: events are queued, not lost |
