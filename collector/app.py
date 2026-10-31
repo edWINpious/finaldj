@@ -1,0 +1,166 @@
+"""Central collector: the smallest API that satisfies HANDOFF_FINAL.md §7 for live events,
+alerts, profiles and adaptation history. Response actions, coverage and IOC export are the
+integrator's and are not implemented here.
+"""
+
+from __future__ import annotations
+
+import os
+from collections import Counter
+from datetime import datetime, timezone
+from typing import Any
+
+from fastapi import Body, FastAPI, HTTPException, Query
+from pydantic import TypeAdapter, ValidationError
+
+from .detections import process_event
+from .schema import AdaptationRecord, CanonicalEvent, Heartbeat
+from .storage import Store
+
+MAX_BATCH = 50
+SENSOR_STALE_S = 45
+
+app = FastAPI(title="SOC Collector", docs_url=None, redoc_url=None, openapi_url=None)
+store = Store(os.environ.get("COLLECTOR_DB_PATH", "data/collector.db"))
+_events = TypeAdapter(list[CanonicalEvent])
+_adaptations = TypeAdapter(list[AdaptationRecord])
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _as_list(body: Any) -> list[Any]:
+    items = body if isinstance(body, list) else [body]
+    if len(items) > MAX_BATCH:
+        raise HTTPException(status_code=413, detail=f"batch larger than {MAX_BATCH}")
+    return items
+
+
+@app.post("/api/events")
+def ingest_events(body: Any = Body(...)) -> dict[str, int]:
+    try:
+        events = _events.validate_python(_as_list(body))
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors(include_input=False, include_url=False)) from exc
+    stored = 0
+    for event in events:
+        doc = event.model_dump(mode="json")
+        if store.insert_event(doc):
+            stored += 1
+            process_event(store, doc)
+    return {"received": len(events), "stored": stored, "duplicates": len(events) - stored}
+
+
+@app.post("/api/adaptations")
+def ingest_adaptations(body: Any = Body(...)) -> dict[str, int]:
+    try:
+        records = _adaptations.validate_python(_as_list(body))
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors(include_input=False, include_url=False)) from exc
+    return {"stored": sum(store.put_adaptation(r.model_dump(mode="json")) for r in records)}
+
+
+@app.post("/api/sensors/heartbeat")
+def sensor_heartbeat(beat: Heartbeat) -> dict[str, str]:
+    store.put_sensor(beat.sensor_id, _now(), {**beat.model_dump(mode="json"), "last_seen": _now()})
+    return {"status": "ok"}
+
+
+@app.get("/api/events")
+def list_events(limit: int = Query(100, ge=1, le=1000), offset: int = Query(0, ge=0), service: str | None = None,
+                source_ip: str | None = None, session_id: str | None = None) -> list[dict[str, Any]]:
+    return store.events(limit, offset, service, source_ip, session_id)
+
+
+@app.get("/api/alerts")
+def list_alerts(limit: int = Query(200, ge=1, le=1000)) -> list[dict[str, Any]]:
+    order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    return sorted(store.alerts(limit), key=lambda a: order.get(a["severity"], 9))
+
+
+def _profile(source_ip: str, events: list[dict[str, Any]], alerts: list[dict[str, Any]]) -> dict[str, Any]:
+    stamps = [e["timestamp"] for e in events]
+    return {
+        "source_ip": source_ip, "first_seen": min(stamps), "last_seen": max(stamps), "event_count": len(events),
+        "services": sorted({e["service"] for e in events}),
+        "sessions": len({e["session_id"] for e in events if e["session_id"]}),
+        "alert_count": len(alerts),
+        "highest_severity": next((a["severity"] for a in sorted(
+            alerts, key=lambda a: {"critical": 0, "high": 1, "medium": 2, "low": 3}[a["severity"]])), None),
+        "note": "Observed source, not an identified person.",
+    }
+
+
+@app.get("/api/attackers")
+def list_attackers() -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for event in store.events(5000):
+        grouped.setdefault(event["source_ip"], []).append(event)
+    alerts = store.alerts(1000)
+    return [_profile(ip, evs, [a for a in alerts if a["source_ip"] == ip]) for ip, evs in grouped.items()]
+
+
+@app.get("/api/attackers/{source_ip}")
+def attacker_detail(source_ip: str) -> dict[str, Any]:
+    events = store.events(1000, source_ip=source_ip)
+    if not events:
+        raise HTTPException(status_code=404, detail="no events for that source")
+    alerts = [a for a in store.alerts(1000) if a["source_ip"] == source_ip]
+    return {**_profile(source_ip, events, alerts), "alerts": alerts, "timeline": list(reversed(events))}
+
+
+@app.get("/api/adaptations")
+def list_adaptations(limit: int = Query(200, ge=1, le=1000)) -> list[dict[str, Any]]:
+    """Follow-ups come from genuine service events: a successful read of the asset. Only a
+    successful read counts, since that is impossible before the grant."""
+    db_events = store.events(5000, service="database")
+    out = []
+    for record in store.adaptations(limit):
+        followups = [e for e in db_events if record["asset_revealed"] in e["table_names"] and e["outcome"] == "succeeded"]
+        out.append({**record, "followup_event_ids": [e["event_id"] for e in followups],
+                    "followups": [{"event_id": e["event_id"], "timestamp": e["timestamp"], "command": e["command"],
+                                   "source_ip": e["source_ip"], "session_id": e["session_id"]} for e in followups[:20]]})
+    return out
+
+
+@app.get("/api/database/summary")
+def database_summary() -> dict[str, Any]:
+    events = store.events(5000, service="database")
+    queries = [e for e in events if e["event_type"] == "sql_query"]
+    auth = [e for e in events if e["event_type"] == "authentication"]
+    evidence = [e["raw_evidence_redacted"] for e in queries]
+    tables: Counter[str] = Counter(t for e in queries for t in e["table_names"])
+    mitre: Counter[str] = Counter()
+    for item in evidence:
+        for m in item.get("mitre") or []:
+            mitre[f"{m['technique']} {m['name']} ({m['status']})"] += 1
+    return {
+        "connections_succeeded": sum(e["outcome"] == "succeeded" for e in auth),
+        "connections_failed": sum(e["outcome"] == "failed" for e in auth),
+        "queries_captured": len(queries),
+        "unique_sources": len({e["source_ip"] for e in events}),
+        "sensitive_access": sum(e["action"] in ("sensitive_access", "adaptive_decoy_access") for e in queries),
+        "denied_statements": sum(e["outcome"] == "blocked" for e in queries),
+        "categories": Counter(e["action"] for e in queries),
+        "severity": Counter(item.get("severity", "LOW") for item in evidence),
+        "top_tables": tables.most_common(10),
+        "mitre": mitre.most_common(),
+    }
+
+
+@app.get("/api/sensors")
+def list_sensors() -> list[dict[str, Any]]:
+    now = datetime.now(timezone.utc)
+    out = []
+    for sensor in store.sensors():
+        seen = datetime.fromisoformat(sensor["last_seen"].replace("Z", "+00:00"))
+        age = (now - seen).total_seconds()
+        out.append({**sensor, "age_seconds": round(age), "stale": age > SENSOR_STALE_S})
+    return out
+
+
+@app.get("/health")
+def health() -> dict[str, Any]:
+    return {"status": "ok", "events_stored": store.count_events(),
+            "sensors": {s["sensor_id"]: ("stale" if s["stale"] else s["status"]) for s in list_sensors()}}

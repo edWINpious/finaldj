@@ -1,0 +1,6 @@
+# Root build context is used only by collector/ and dashboard/.
+*
+!collector
+!dashboard
+**/__pycache__
+**/data
