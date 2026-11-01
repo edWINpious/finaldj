@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import socket
 import subprocess
 import sys
@@ -23,6 +24,19 @@ TIMESTAMP = "2026-10-31T12:00:00.000Z"
 MIB = 1 << 20
 POST_EVENTS = b"POST /api/events HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
 STATUS = re.compile(rb"HTTP/1\.1 (\d{3})")
+
+
+def write_tokens(folder: Path) -> tuple[str, str, dict[str, str]]:
+    """Random tokens, created for one test and never shown. Returns (ssh, read, settings)."""
+    ssh_token, read_token = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
+    (folder / "ssh.token").write_text(ssh_token + "\n", encoding="ascii")
+    (folder / "read.token").write_text(read_token + "\n", encoding="ascii")
+    return ssh_token, read_token, {"SSH_INGEST_TOKEN_FILE": str(folder / "ssh.token"),
+                                   "SOC_READ_TOKEN_FILE": str(folder / "read.token")}
+
+
+def auth(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
 
 
 def web_event(event_id: str | None = None, **change: Any) -> dict[str, Any]:

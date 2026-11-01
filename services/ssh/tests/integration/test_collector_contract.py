@@ -28,6 +28,7 @@ for path in (str(REPO), str(SSH_ROOT / "sensor" / "src")):
     if path not in sys.path:
         sys.path.insert(0, path)
 
+from collector.detections import ACTIONS, TITLES  # noqa: E402
 from collector.schema import CanonicalEvent, EventType, Outcome, Service  # noqa: E402
 
 from cowrie_soc import canonical  # noqa: E402
@@ -39,6 +40,8 @@ from cowrie_soc.parser import ParsedEvent, RawLine, parse_line  # noqa: E402
 from cowrie_soc.redact import sanitize_event  # noqa: E402
 from dataclasses import replace  # noqa: E402
 
+from collector_support import auth, write_tokens  # noqa: E402
+
 SENSOR = "ssh-01"
 CAPTURE = SSH_ROOT / "sensor/tests/fixtures/real_capture_2026-10-31.json"
 WEB_SAMPLE = REPO / "services/web/samples/web-attack-campaign.sample.jsonl"
@@ -48,10 +51,15 @@ TIMESTAMP = "2026-10-31T12:00:00.000Z"
 @pytest.fixture
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("COLLECTOR_DB_PATH", str(tmp_path / "collector.db"))
+    ssh_token, _read_token, settings = write_tokens(tmp_path)
+    for name, value in settings.items():
+        monkeypatch.setenv(name, value)
     import collector.app as module
 
     importlib.reload(module)
-    return TestClient(module.app)
+    test_client = TestClient(module.app)
+    test_client.ssh_headers = auth(ssh_token)  # type: ignore[attr-defined]
+    return test_client
 
 
 def capture_events() -> list[dict[str, Any]]:
@@ -71,7 +79,9 @@ def capture_events() -> list[dict[str, Any]]:
 
 def post(client: TestClient, events: list[dict[str, Any]]) -> None:
     for i in range(0, len(events), 50):
-        response = client.post("/api/events", json=events[i:i + 50])
+        batch = events[i:i + 50]
+        headers = client.ssh_headers if batch[0]["service"] == "ssh" else {}  # type: ignore[attr-defined]
+        response = client.post("/api/events", json=batch, headers=headers)
         assert response.status_code == 200
 
 
@@ -178,7 +188,7 @@ def test_alerts_keep_their_techniques(client: TestClient) -> None:
     assert {a["rule"] for a in alerts} == {"SSH-BRUTE-001", "SSH-AUTH-002", "SSH-EXEC-001", "SSH-DISC-001", "SSH-CRED-001",
                                            "SSH-TOOL-001", "SSH-SEQ-001"}
     assert all(a["attack_ids"] for a in alerts)
-    assert all(a["title"] == f"ssh:{a['rule']}" for a in alerts)
+    assert all(a["title"] == TITLES[a["rule"]] and a["recommended_action"] == ACTIONS[a["rule"]] for a in alerts)
 
 
 def test_download_alert_shows_only_an_attempt(client: TestClient) -> None:
@@ -271,7 +281,8 @@ def test_dashboard_renders_ssh_events_and_a_missing_address(client: TestClient, 
     import httpx
 
     post(client, capture_events())
-    post(client, [ssh_event(None, "abc001"), db_event(source_ip="unknown")])
+    post(client, [ssh_event(None, "abc001")])
+    post(client, [db_event(source_ip="unknown")])
 
     def fake_get(url: str, params: Any = None, **_kwargs: Any) -> httpx.Response:
         path = url.split("127.0.0.1:8000", 1)[-1]

@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import time
 from typing import Any, Awaitable, Callable
@@ -30,6 +31,7 @@ Send = Callable[[dict[str, Any]], Awaitable[None]]
 MIB = 1 << 20
 # POST routes and their body limits. A test keeps this equal to the application's real POST routes.
 ROUTE_LIMITS = {"/api/events": 16 * MIB, "/api/adaptations": 16 * MIB, "/api/sensors/heartbeat": 2 * MIB}
+SENSOR_ROUTES = {("POST", "/api/events"), ("POST", "/api/sensors/heartbeat")}  # all SSH_SENSOR_PEER may use
 AUTHORIZED_LIMIT = MIB  # applies to anything carrying Authorization, so a bad token cannot send more
 BODY_DEADLINE_S = 15.0
 BODY_BUDGET = 32 * MIB
@@ -120,6 +122,11 @@ class BodyGuard:
         problem = _framing_problem(method, headers)
         if problem:
             await self._refuse(send, 400, problem)
+            return
+        locked_to = os.environ.get("SSH_SENSOR_PEER")
+        client = scope.get("client")
+        if locked_to and client and client[0] == locked_to and (method, scope["path"]) not in SENSOR_ROUTES:
+            await self._refuse(send, 403, "sensor address outside its routes")
             return
         if method != "POST":
             await self.app(scope, receive, send)

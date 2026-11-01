@@ -25,6 +25,10 @@ TITLES = {
     "D-AUTH-01": "Repeated failed database logins", "D-DATA-01": "Broad data exploration",
     "D-INJ-01": "Audit log injection attempt", "D-INJ-02": "Audit line with no matching login",
     "X-CORR-01": "Same source active on several decoys",
+    "SSH-BRUTE-001": "Repeated failed SSH logins", "SSH-AUTH-002": "Login to a decoy SSH account",
+    "SSH-EXEC-001": "Commands ran in the emulated SSH shell", "SSH-DISC-001": "Several discovery techniques in one SSH session",
+    "SSH-CRED-001": "Credential file or honeytoken read over SSH", "SSH-TOOL-001": "Remote file download attempted over SSH",
+    "SSH-SEQ-001": "Download, chmod and execute sequence over SSH", "SSH-EVADE-001": "Shell history cleared or disabled over SSH",
 }
 ACTIONS = {
     "D-SENS-01": "Review which synthetic records were read; treat listed credentials as burned decoys.",
@@ -38,6 +42,14 @@ ACTIONS = {
     "D-INJ-01": "Treat the source as aware of the sensor; compare the raw audit log with SOC events.",
     "D-INJ-02": "Do not trust this line's fields; compare the raw audit log around it.",
     "X-CORR-01": "Open the source profile and review the cross-service timeline.",
+    "SSH-BRUTE-001": "Review attempted usernames; recommend a lab-only block if it continues.",
+    "SSH-AUTH-002": "Open the session timeline to see what was done after the decoy login.",
+    "SSH-EXEC-001": "Review the commands; they ran only in the emulated shell.",
+    "SSH-DISC-001": "Review the session for what the source was looking for.",
+    "SSH-CRED-001": "Treat the decoy credentials as burned; watch for their use on other decoys.",
+    "SSH-TOOL-001": "Review the URL and any captured file; a completed transfer is not proven.",
+    "SSH-SEQ-001": "Review the captured file and session; it ran only in the emulated shell.",
+    "SSH-EVADE-001": "Treat the source as aware of logging; review the full session.",
 }
 
 
@@ -49,7 +61,7 @@ def _severity(detection: dict[str, Any]) -> str:
 
 
 def _upsert(store: Store, key: str, event: dict[str, Any], *, rule: str, title: str, severity: str, confidence: str,
-            rationale: str, attack: list[dict[str, Any]], stage: str | None) -> None:
+            rationale: str, attack: list[dict[str, Any]], stage: str | None, evidence_ids: list[str] = ()) -> None:
     alert = store.get_alert(key)
     if alert is None:
         alert = {
@@ -63,6 +75,9 @@ def _upsert(store: Store, key: str, event: dict[str, Any], *, rule: str, title: 
     alert["event_count"] += 1
     if len(alert["related_event_ids"]) < MAX_RELATED:
         alert["related_event_ids"].append(event["event_id"])
+    for event_id in evidence_ids:
+        if len(alert["related_event_ids"]) < MAX_RELATED and event_id not in alert["related_event_ids"]:
+            alert["related_event_ids"].append(event_id)
     if ORDER[severity] > ORDER[alert["severity"]]:
         alert["severity"], alert["rationale"] = severity, rationale
     known = {a.get("technique") for a in alert["attack"]}
@@ -83,13 +98,20 @@ def process_event(store: Store, event: dict[str, Any]) -> None:
         _upsert(store, f"{rule}|{event['source_ip']}", event, rule=rule,
                 title=TITLES.get(rule, str(d.get("label", rule))), severity=_severity(d),
                 confidence=str(d.get("confidence", "low")), rationale=str(d.get("rationale", "")),
-                attack=[a for a in d.get("attack") or [] if isinstance(a, dict)], stage=evidence.get("attack_stage"))
+                attack=[a for a in d.get("attack") or [] if isinstance(a, dict)], stage=evidence.get("attack_stage"),
+                evidence_ids=d.get("evidence_event_ids") or [] if rule.startswith("SSH-") else [])
     _correlate(store, event)
 
 
 def _correlate(store: Store, event: dict[str, Any]) -> None:
-    """Shared IP is a hint, not proof of one actor; the rationale says so."""
-    since = (datetime.fromisoformat(event["timestamp"].replace("Z", "+00:00")) - CORRELATION_WINDOW)
+    """Shared IP is a hint, not proof of one actor; the rationale says so.
+
+    An unknown-ssh- source is a label for one session with no address, not an address, so it links
+    to nothing. A forged audit line can put that label on a Database event, and this keeps it inert.
+    """
+    if event["source_ip"].startswith("unknown-ssh-"):
+        return
+    since =(datetime.fromisoformat(event["timestamp"].replace("Z", "+00:00")) - CORRELATION_WINDOW)
     services = store.services_for_source(event["source_ip"], since.isoformat(timespec="milliseconds").replace("+00:00", "Z"))
     if len(services) >= 2:
         _upsert(store, f"X-CORR-01|{event['source_ip']}", event, rule="X-CORR-01", title=TITLES["X-CORR-01"],

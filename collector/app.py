@@ -10,9 +10,10 @@ from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
 from pydantic import TypeAdapter, ValidationError
 
+from . import ssh_ingest
 from .detections import process_event
 from .guards import BodyGuard
 from .schema import AdaptationRecord, CanonicalEvent, Heartbeat
@@ -38,12 +39,22 @@ def _as_list(body: Any) -> list[Any]:
     return items
 
 
+def _peer(request: Request) -> str | None:
+    return request.client.host if request.client else None
+
+
 @api.post("/api/events")
-def ingest_events(body: Any = Body(...)) -> dict[str, int]:
+def ingest_events(request: Request, body: Any = Body(...)) -> dict[str, int]:
+    items = _as_list(body)
+    from_ssh = ssh_ingest.admit_events(items, request.scope["headers"], _peer(request))
     try:
-        events = _events.validate_python(_as_list(body))
+        events = _events.validate_python(items)
     except ValidationError as exc:
+        if from_ssh:
+            raise HTTPException(status_code=422, detail=ssh_ingest.REJECTED) from None
         raise HTTPException(status_code=422, detail=exc.errors(include_input=False, include_url=False)) from exc
+    if from_ssh:
+        ssh_ingest.check_events(items)
     stored = 0
     for event in events:
         doc = event.model_dump(mode="json")
@@ -54,15 +65,27 @@ def ingest_events(body: Any = Body(...)) -> dict[str, int]:
 
 
 @api.post("/api/adaptations")
-def ingest_adaptations(body: Any = Body(...)) -> dict[str, int]:
+def ingest_adaptations(request: Request, body: Any = Body(...)) -> dict[str, int]:
+    items = _as_list(body)
+    ssh_ingest.admit_adaptations(items, request.scope["headers"], _peer(request))
     try:
-        records = _adaptations.validate_python(_as_list(body))
+        records = _adaptations.validate_python(items)
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.errors(include_input=False, include_url=False)) from exc
     return {"stored": sum(store.put_adaptation(r.model_dump(mode="json")) for r in records)}
 
 
-@api.post("/api/sensors/heartbeat")
+async def _heartbeat_identity(request: Request) -> None:
+    """Runs before the Heartbeat model is checked, so a malformed claim of SSH cannot skip it."""
+    try:
+        body = await request.json()
+    except ValueError:
+        return
+    if ssh_ingest.admit_heartbeat(body, request.scope["headers"], _peer(request)):
+        ssh_ingest.check_heartbeat(body)
+
+
+@api.post("/api/sensors/heartbeat", dependencies=[Depends(_heartbeat_identity)])
 def sensor_heartbeat(beat: Heartbeat) -> dict[str, str]:
     store.put_sensor(beat.sensor_id, _now(), {**beat.model_dump(mode="json"), "last_seen": _now()})
     return {"status": "ok"}
