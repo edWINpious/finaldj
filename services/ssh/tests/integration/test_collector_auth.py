@@ -197,12 +197,20 @@ def test_a_label_for_its_own_session_passes(lab: Lab) -> None:
     assert lab.client.post(EVENTS, json=[event], headers=lab.headers).status_code == 200
 
 
-def test_evidence_nested_past_the_recursion_limit_cannot_crash_the_check(lab: Lab) -> None:
+@pytest.mark.parametrize("depth", [20, 3000])
+def test_deep_evidence_refuses_the_whole_batch_and_cannot_crash_storage(lab: Lab, depth: int) -> None:
+    """Python 3.12 accepts 3,000 levels in json.dumps, and storage then fails. 3.13 refuses earlier."""
     event = good_event()
     event["raw_evidence_redacted"]["details"]["a"] = "DEEP"
-    body = json.dumps([event]).replace('"DEEP"', "[" * 3000 + "]" * 3000)
+    body = json.dumps([*real_batch()[1:3], event]).replace('"DEEP"', "[" * depth + "]" * depth)
     response = lab.client.post(EVENTS, content=body, headers={**lab.headers, "content-type": "application/json"})
     assert response.status_code in (400, 422) and lab.stored() == 0
+
+
+def test_deep_heartbeat_details_are_refused(lab: Lab) -> None:
+    body = '{"sensor_id":"ssh-01","service":"ssh","status":"ok","details":{"a":' + "[" * 3000 + "]" * 3000 + "}}"
+    response = lab.client.post(HEARTBEAT, content=body, headers={**lab.headers, "content-type": "application/json"})
+    assert response.status_code in (400, 422) and lab.module.store.sensors() == []
 
 
 # -- the header ----------------------------------------------------------------------------------

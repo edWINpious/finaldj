@@ -37,6 +37,7 @@ SENSOR_ID = "ssh-01"
 SERVICE = "ssh"
 DESTINATION_SERVICE = "ssh-honeypot"
 MAX_EVIDENCE_BYTES = 8192
+MAX_EVIDENCE_DEPTH = 16
 MAX_COMMAND_CHARS = 2048
 MAX_TEXT_CHARS = 256
 MAX_TAGS = 16
@@ -179,6 +180,8 @@ def _clean_keys(value: Any) -> bool:
     stack: list[tuple[Any, tuple[str, ...]]] = [(value, ())]
     while stack:
         node, path = stack.pop()
+        if len(path) > MAX_EVIDENCE_DEPTH:  # storage cannot serialize very deep values on every Python
+            return False
         if isinstance(node, dict):
             for key, child in node.items():
                 here = (*path, key)

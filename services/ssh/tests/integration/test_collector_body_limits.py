@@ -134,9 +134,14 @@ def test_every_real_post_route_has_a_limit(tmp_path: Path, monkeypatch: pytest.M
 BIG = json.dumps([web_event("big", raw_evidence_redacted={"a": "x" * (17 * MIB)})]).encode()
 
 
-def test_declared_oversize_is_refused_and_the_follower_is_not_stored(server: Server) -> None:
-    codes, closed = server.talk(POST_EVENTS + b"Content-Length: %d\r\n\r\n" % len(BIG) + BIG + event_request("after-declared"), wait=2)
-    assert codes[:1] == ["413"] and closed and not server.stored("after-declared")
+def test_declared_oversize_is_refused_before_any_body_byte(server: Server) -> None:
+    """Linux resets a socket that is still sending, which destroys the reply, so only headers go first."""
+    assert server.talk(POST_EVENTS + b"Content-Length: %d\r\n\r\n" % len(BIG), wait=2) == (["413"], True)
+
+
+def test_declared_oversize_leaves_the_follower_unstored(server: Server) -> None:
+    server.talk(POST_EVENTS + b"Content-Length: %d\r\n\r\n" % len(BIG) + BIG + event_request("after-declared"), wait=2)
+    assert not server.stored("after-declared")
 
 
 def test_chunked_oversize_is_refused_and_the_follower_is_not_stored(server: Server) -> None:
@@ -166,26 +171,31 @@ def event_of_size(size: int, event_id: str) -> bytes:
     return json.dumps([web_event(event_id, raw_evidence_redacted={"a": "x" * (size - len(empty))})]).encode()
 
 
+def declares(size: int, path: bytes = b"/api/events", extra: bytes = b"") -> bytes:
+    return b"POST %s HTTP/1.1\r\nHost: x\r\n%sContent-Length: %d\r\n\r\n" % (path, extra, size)
+
+
 def test_exactly_the_limit_passes_and_one_byte_more_does_not(server: Server) -> None:
-    limit = guards.ROUTE_LIMITS["/api/events"]
+    limit = 16 * MIB  # written out: a test must not read the value it is checking from the code
     assert len(event_of_size(limit, "at-limit")) == limit
     assert server.talk(post_request(event_of_size(limit, "at-limit")), wait=10)[0] == ["200"]
-    assert server.talk(post_request(event_of_size(limit + 1, "over-limit")), wait=2)[0][:1] == ["413"]
-    assert server.stored("at-limit") and not server.stored("over-limit")
+    assert server.talk(declares(limit + 1), wait=2) == (["413"], True)
+    assert server.stored("at-limit")
 
 
 def test_a_request_with_authorization_gets_the_small_limit(server: Server) -> None:
-    body = event_of_size(guards.AUTHORIZED_LIMIT + 1, "with-header")
-    head = POST_EVENTS + b"Authorization: Bearer x\r\nContent-Length: %d\r\n\r\n" % len(body)
-    assert server.talk(head + body, wait=2)[0][:1] == ["413"] and not server.stored("with-header")
+    assert server.talk(declares(MIB + 1, extra=b"Authorization: Bearer x\r\n"), wait=2) == (["413"], True)
 
 
 def test_heartbeat_has_its_own_limit(server: Server) -> None:
-    limit = guards.ROUTE_LIMITS["/api/sensors/heartbeat"]
-    body = json.dumps({"sensor_id": "db-01", "service": "database", "status": "ok", "details": {"a": "x" * limit}}).encode()
-    assert server.talk(post_request(body, b"/api/sensors/heartbeat"), wait=2)[0][:1] == ["413"]
-    normal = {"sensor_id": "db-01", "service": "database", "status": "ok", "details": {"a": "x" * (limit // 2)}}
+    assert server.talk(declares(2 * MIB + 1, b"/api/sensors/heartbeat"), wait=2) == (["413"], True)
+    normal = {"sensor_id": "db-01", "service": "database", "status": "ok", "details": {"a": "x" * MIB}}
     assert server.talk(post_request(json.dumps(normal).encode(), b"/api/sensors/heartbeat"), wait=2)[0] == ["200"]
+
+
+def test_adaptations_keep_the_large_limit(server: Server) -> None:
+    assert server.talk(declares(16 * MIB + 1, b"/api/adaptations"), wait=2) == (["413"], True)
+    assert guards.ROUTE_LIMITS["/api/adaptations"] == 16 * MIB
 
 
 def test_deep_nesting_is_refused_quickly(server: Server) -> None:
@@ -403,8 +413,12 @@ def test_small_bodies_are_not_scanned() -> None:
 
 
 def test_the_real_server_refuses_expensive_structure(server: Server) -> None:
-    body = b"[" + b"[]," * (5 * MIB) + b"1]"
-    assert server.talk(post_request(body), wait=3)[0][:1] == ["413"]
+    """One valid event, so only the structure check can refuse it: a long list is refused by the
+    batch limit, which is also a 413."""
+    head = json.dumps([web_event("structure", raw_evidence_redacted={"a": "HERE"})]).encode()
+    body = head.replace(b'"HERE"', b"[" + b"[]," * 500_000 + b"1]")
+    assert MIB < len(body) < 16 * MIB and server.talk(post_request(body), wait=5)[0] == ["413"]
+    assert not server.stored("structure")
 
 
 # -- the read cap -------------------------------------------------------------------------------
