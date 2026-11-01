@@ -16,6 +16,7 @@ from pydantic import TypeAdapter, ValidationError
 from . import ssh_ingest
 from .detections import process_event
 from .guards import BodyGuard
+from .read_auth import ReadGate
 from .schema import AdaptationRecord, CanonicalEvent, Heartbeat
 from .storage import Store
 
@@ -185,9 +186,11 @@ def list_sensors() -> list[dict[str, Any]]:
 
 
 @api.get("/health")
-def health() -> dict[str, Any]:
+def health(request: Request) -> dict[str, Any]:
+    if not request.scope.get("read_access", True):
+        return {"status": "ok"}
     return {"status": "ok", "events_stored": store.count_events(), "read_capped_at": store.read_capped_at,
             "sensors": {s["sensor_id"]: ("stale" if s["stale"] else s["status"]) for s in list_sensors()}}
 
 
-app = BodyGuard(api)
+app = BodyGuard(ReadGate(api))

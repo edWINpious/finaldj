@@ -51,13 +51,13 @@ TIMESTAMP = "2026-10-31T12:00:00.000Z"
 @pytest.fixture
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("COLLECTOR_DB_PATH", str(tmp_path / "collector.db"))
-    ssh_token, _read_token, settings = write_tokens(tmp_path)
+    ssh_token, read_token, settings = write_tokens(tmp_path)
     for name, value in settings.items():
         monkeypatch.setenv(name, value)
     import collector.app as module
 
     importlib.reload(module)
-    test_client = TestClient(module.app)
+    test_client = TestClient(module.app, headers=auth(read_token))
     test_client.ssh_headers = auth(ssh_token)  # type: ignore[attr-defined]
     return test_client
 
@@ -284,9 +284,9 @@ def test_dashboard_renders_ssh_events_and_a_missing_address(client: TestClient, 
     post(client, [ssh_event(None, "abc001")])
     post(client, [db_event(source_ip="unknown")])
 
-    def fake_get(url: str, params: Any = None, **_kwargs: Any) -> httpx.Response:
+    def fake_get(url: str, params: Any = None, headers: Any = None, **_kwargs: Any) -> httpx.Response:
         path = url.split("127.0.0.1:8000", 1)[-1]
-        response = client.get(path, params=params)
+        response = client.get(path, params=params, headers=headers)
         return httpx.Response(response.status_code, content=response.content,
                               request=httpx.Request("GET", url))
 

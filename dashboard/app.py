@@ -20,8 +20,21 @@ SEVERITY_COLORS = {"LOW": "#4c9f70", "MEDIUM": "#e0a526", "HIGH": "#dd6b20", "CR
 st.set_page_config(page_title="SOC Dashboard", layout="wide")
 
 
+def read_headers() -> dict[str, str]:
+    """The read token, sent if configured. A problem here shows as the normal collector error."""
+    path = os.environ.get("SOC_READ_TOKEN_FILE")
+    if not path:
+        return {}
+    try:
+        with open(path, encoding="ascii") as fh:
+            token = fh.read(4097).strip()
+    except (OSError, ValueError):
+        return {}
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
 def get(path: str, **params: Any) -> Any:
-    response = httpx.get(f"{API}{path}", params=params, timeout=5, trust_env=False)
+    response = httpx.get(f"{API}{path}", params=params, headers=read_headers(), timeout=5, trust_env=False)
     response.raise_for_status()
     return response.json()
 

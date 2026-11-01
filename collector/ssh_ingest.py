@@ -28,6 +28,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from . import read_auth
 from .auth import bearer, load_token, same
 from .guards import note_refusal
 from .schema import CanonicalEvent
@@ -125,9 +126,11 @@ def _sender_is_ssh(headers: list[tuple[bytes, bytes]], peer: str | None, claimed
     if not claimed and not presented:
         return False
     token = load_token(os.environ.get("SSH_INGEST_TOKEN_FILE"))
-    if token is None:
+    read_token = read_auth.token()
+    if token is None or read_token is None or same(token, read_token):
+        # No SSH data while reads are open, and a read token must never be able to write.
         if claimed:
-            raise _refuse(503, UNAVAILABLE, "ssh token unavailable")
+            raise _refuse(503, UNAVAILABLE, "ssh token or read token unavailable")
         return False
     valid = same(bearer(headers), token)
     locked_to = os.environ.get("SSH_SENSOR_PEER")
