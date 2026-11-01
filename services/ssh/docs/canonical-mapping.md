@@ -124,7 +124,7 @@ A request claims SSH if any item has `service` of `ssh`, a `sensor_id` starting 
 
 The header must be exactly one `Authorization: Bearer <token>`. Two headers are refused even if one is correct. Tokens are read on each request, so a new token works without a restart.
 
-Strict checks: identity exactly `ssh-01`, `ssh`, `ssh-honeypot`; strict UUID and timestamp; hex session; an IP or `unknown-ssh-<this event's session>`; port 0 to 65535 or null; unused fields null or empty; `ssh:` tags; evidence at most 8 KiB with `honeypot_type: ssh`; no `password`, `message`, `format` or `ttylog` key at any depth, apart from `raw.format`; known rules with exact labels, allowed keys and bounded text.
+Strict checks: identity exactly `ssh-01`, `ssh`, `ssh-honeypot`; strict UUID and timestamp; hex session; an IP or `unknown-ssh-<this event's session>`; port 0 to 65535 or null; unused fields null or empty; `ssh:` tags; evidence at most 8 KiB and 16 levels deep with `honeypot_type: ssh`; no `password`, `message`, `format` or `ttylog` key at any depth, apart from `raw.format`; known rules with exact labels, allowed keys and bounded text.
 
 `unknown-ssh-<session>` is not a claim on its own, because a forged audit line can put it on a Database event and a refusal would stall that sender. The collector instead never correlates a source with that prefix.
 
