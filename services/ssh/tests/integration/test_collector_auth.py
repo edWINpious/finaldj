@@ -310,6 +310,15 @@ def test_a_broken_ssh_secret_refuses_ssh_and_leaves_others_alone(lab: Lab, damag
     assert lab.client.post(HEARTBEAT, json={"sensor_id": "db-01", "service": "database", "status": "ok"}).status_code == 200
 
 
+def test_web_and_database_traffic_never_reads_the_token_file(lab: Lab, monkeypatch: pytest.MonkeyPatch) -> None:
+    def must_not_run(_path: Any) -> None:
+        raise AssertionError("a token file was read")
+
+    monkeypatch.setattr("collector.ssh_ingest.load_token", must_not_run)
+    assert lab.client.post(EVENTS, json=[web_event()]).status_code == 200
+    assert lab.client.post(HEARTBEAT, json={"sensor_id": "db-01", "service": "database", "status": "ok"}).status_code == 200
+
+
 def test_setting_absent_refuses_ssh(lab: Lab, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SSH_INGEST_TOKEN_FILE")
     assert lab.client.post(EVENTS, json=real_batch()).status_code == 503
