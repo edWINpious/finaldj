@@ -100,6 +100,36 @@ The collector accepts more than its schema suggests: an empty `event_id`, a port
 - `cowrie-soc status` shows the state, attempts, last status, queue size and skip counts.
 - If `soc_outbox` reaches `max_soc_pending`, new events are skipped as `queue_full`, and local logging carries on.
 
+## What the collector requires
+
+The collector checks this itself and does not rely on the sensor. The code is in `collector/ssh_ingest.py`. Nothing here is deployed until Stage 5.
+
+| Setting | Holds | If unset or unusable |
+|---|---|---|
+| `SSH_INGEST_TOKEN_FILE` | File with the SSH write token | SSH gets `503`; Web and Database are unaffected |
+| `SOC_READ_TOKEN_FILE` | File with the dashboard's read token | SSH gets `503`, so SSH data cannot arrive while reads are open |
+| `SSH_SENSOR_PEER` | Optional sensor address | Unset does nothing. Set, the token works only from that address, and that address can only use the two POST routes |
+
+A request claims SSH if any item has `service` of `ssh`, a `sensor_id` starting `ssh` or `cowrie`, a `destination_service` containing `ssh-honeypot`, a tag starting `ssh`, or a detection `rule` or `label` starting `ssh`. Values are compared after Unicode normalization, ignoring case and punctuation. Look-alike letters from other alphabets are not caught.
+
+| Situation | Response | Sensor state |
+|---|---|---|
+| Valid token, every event passes | `200` | Delivered |
+| Claim with a missing or wrong token | `401`, same body | `unauthorized` |
+| Valid token with any non-SSH item | `403`, nothing stored | `unauthorized` |
+| Any adaptation claiming SSH, even with a token | `403` | Not used by the sensor |
+| Any event fails a strict check | `422`, whole batch refused | `rejected` |
+| A token file unusable, or both tokens identical | `503` | `retrying` |
+| Body over 1 MiB (anything with `Authorization`) | `413` | `rejected` |
+
+The header must be exactly one `Authorization: Bearer <token>`. Two headers are refused even if one is correct. Tokens are read on each request, so a new token works without a restart.
+
+Strict checks: identity exactly `ssh-01`, `ssh`, `ssh-honeypot`; strict UUID and timestamp; hex session; an IP or `unknown-ssh-<this event's session>`; port 0 to 65535 or null; unused fields null or empty; `ssh:` tags; evidence at most 8 KiB with `honeypot_type: ssh`; no `password`, `message`, `format` or `ttylog` key at any depth, apart from `raw.format`; known rules with exact labels, allowed keys and bounded text.
+
+`unknown-ssh-<session>` is not a claim on its own, because a forged audit line can put it on a Database event and a refusal would stall that sender. The collector instead never correlates a source with that prefix.
+
+Alerts for SSH rules use fixed titles and actions from `collector/detections.py`, and link the finding's evidence event IDs, up to the existing limit of 200.
+
 ## Not yet done
 
-The collector needs a token check before delivery is enabled. Until the collector gains fixed SSH titles, an alert title reads `ssh:SSH-CRED-001`, and the alert links only its trigger event. SSH has no risk score.
+SSH has no risk score. Delivery stays off until the Stage 5 gates pass.

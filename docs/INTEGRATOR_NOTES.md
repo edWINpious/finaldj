@@ -110,3 +110,38 @@ networks:
 2. Confirm the lab subnet, the collector's fixed IP (§6) and the simulator's fixed IP (§4).
 3. Confirm the dashboard renders evidence as plain text only (§3).
 4. Deduplicate on `event_id` (§1).
+
+## 10. Collector request limits and read access (Stage 4)
+
+Code and tests only. None of this runs until the collector is rebuilt at Stage 5. Web and Database senders need no changes.
+
+**Limits, in `collector/guards.py`:**
+
+| Rule | Value | Result |
+|---|---|---|
+| `POST /api/events`, `/api/adaptations` | 16 MiB | `413` |
+| `POST /api/sensors/heartbeat` | 2 MiB | `413` |
+| Any request with `Authorization` | 1 MiB | `413` |
+| Whole body must arrive within | 15 s, absolute | `408` |
+| Bodies in progress at once | 32 MiB, held until the app finishes | `503` |
+| Bodies over 1 MiB: commas outside strings | 1,500,000 | `413` |
+| Bodies over 1 MiB: `[` and `{` outside strings | 100,000 | `413` |
+| One read of stored data | 64 MiB of text, newest first | Result may be incomplete |
+| Both `Content-Length` and `Transfer-Encoding`, or a body on any method but POST | | `400` |
+| POST to an unknown path | | `404` |
+
+Every guard refusal above closes the connection, so unread bytes cannot become another request. A sender may see a reset instead of the status, and treats that as a normal failed send.
+
+**The guard runs after the HTTP parser, not before it.** h11 keeps both framing headers, so the guard sees them, but h11 may already have decoded up to about 64 KiB of a body it received. No body reaches the application until the guard passes it. This depends on h11, so `h11` and `--http h11` are pinned and a test fails if the behaviour changes. Identical duplicate lengths are merged by h11 before the guard sees them, which is safe because only one length remains.
+
+**The 32 MiB budget is not a memory ceiling.** It limits raw bytes in progress. Parsed JSON can be about 25 times its text. Two bodies of empty lists killed an unprotected server under a 1536 MiB limit, which is why the structure check and read cap exist. A collector memory limit stays mandatory at Stage 5.
+
+**A refused Database event batch blocks all later Database telemetry.** The Database sender retries the head of its queue forever (`emitter.py`), so any `4xx` stops delivery until a person steps in. Nothing is lost: events stay in its spool and JSONL log. This already happens today with one invalid event. It is why no collector limit may refuse a real batch, and why text inside strings is never counted. The largest batch measured is 4.62 MiB. A test pins this behaviour, and it should change with the sender.
+
+**A refused heartbeat loses only a status update.** A session's table list has no cap, so an attacker can push a heartbeat over 2 MiB and make the Database sensor look stale until newer sessions replace it. Event delivery is not affected.
+
+**Before Database or Web get write tokens:** the 1 MiB limit applies to anything with `Authorization`, which would refuse a real 4.62 MiB Database batch and block its queue. That limit must become per-token first.
+
+**Reading:** with `SOC_READ_TOKEN_FILE` set, everything except POST needs the read token, and `/health` without it returns only `{"status":"ok"}`. Anyone calling the API by hand must send the token. Unset, reads stay open, and the collector refuses all SSH data with `503`.
+
+**Stage 5 gates, in order. If any fails, SSH delivery stays disabled:** Docker secrets in place; collector memory limit set; `--http h11` running in the built image; body, header and memory tests repeated against the real container; read authentication on; the real dashboard container reads every protected endpoint with its own token, no token and a wrong token both get `401`, and the page loads data. Only then set `enabled = true`.
