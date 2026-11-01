@@ -59,6 +59,20 @@ class CanonicalEvent(BaseModel):
         return v.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
+class ConsoleEvent(CanonicalEvent):
+    """The SOC console's own authentication audit trail, in the same envelope as decoy events.
+
+    Kept out of Service on purpose: /api/events validates CanonicalEvent, so no sender on the
+    ingest network can claim to be the console. Only collector/console_api.py builds these, for
+    a caller holding the console token.
+    """
+
+    service: Literal["soc"]
+    sensor_id: Literal["soc-auth"]
+    destination_service: Literal["soc-console"]
+    event_type: Literal["authentication"]
+
+
 class AdaptationRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

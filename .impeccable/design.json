@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-01T03:35:00Z",
+  "title": "Design System: TransNova SOC",
+  "extensions": {
+    "colorMeta": {
+      "cabinet-green": { "role": "primary", "displayName": "Cabinet Green", "tonalRamp": ["#0f1d1a", "#18302a", "#24413a", "#3a5c53", "#5b7d73", "#86a198", "#b6c8c1", "#e3ece8"] },
+      "brass": { "role": "secondary", "displayName": "Brass", "tonalRamp": ["#3a2c10", "#5a4419", "#74581f", "#a8823a", "#c4a25f", "#d9c190", "#ebdcb9", "#f7f0e2"] },
+      "stone-ground": { "role": "neutral", "displayName": "Stone Ground", "tonalRamp": ["#2a2925", "#4a4842", "#77746b", "#a4a095", "#cfccc2", "#e2dfd6", "#eceae4", "#fbfaf6"] },
+      "curator-red": { "role": "status-critical", "displayName": "Curator Red", "tonalRamp": ["#3b140d", "#5e2118", "#7d2d21", "#9c3b2a", "#bf6655", "#d99a8e", "#ecc9c2", "#f6e3de"] },
+      "series-web": { "role": "series", "displayName": "Web decoy" },
+      "series-database": { "role": "series", "displayName": "Database decoy" },
+      "series-ssh": { "role": "series", "displayName": "SSH decoy" },
+      "series-soc": { "role": "series", "displayName": "SOC console" }
+    },
+    "typographyMeta": {
+      "page-title": { "displayName": "Page title", "purpose": "One per page." },
+      "panel-title": { "displayName": "Panel title", "purpose": "Sentence-case panel headings." },
+      "body": { "displayName": "Body", "purpose": "Prose, ledes and state sentences." },
+      "data": { "displayName": "Data", "purpose": "IDs, timestamps, addresses, commands, counts; tabular figures." }
+    },
+    "shadows": [
+      { "name": "tooltip", "value": "0 6px 18px rgba(29, 35, 33, 0.18)", "purpose": "Chart tooltip only." }
+    ],
+    "motion": [
+      { "name": "state", "value": "120-160ms ease-out", "purpose": "Hover and selection colour changes; disabled under prefers-reduced-motion." },
+      { "name": "shimmer", "value": "1.4s ease-in-out infinite", "purpose": "Skeleton loading rows only." }
+    ],
+    "breakpoints": [
+      { "name": "single-column", "value": "1180px" },
+      { "name": "top-bar-nav", "value": "900px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button", "kind": "button", "refersTo": "button-primary",
+      "description": "The one committing action in a form.",
+      "html": "<button class=\"ds-btn-primary\">Add classification</button>",
+      "css": ".ds-btn-primary { background: #24413a; color: #fff; border: 1px solid #24413a; border-radius: 6px; padding: 7px 14px; font: 400 14px 'Atkinson Hyperlegible', system-ui, sans-serif; cursor: pointer; transition: background-color 140ms ease-out; } .ds-btn-primary:hover { background: #1b3530; } .ds-btn-primary:focus-visible { outline: 2px solid #7d5f22; outline-offset: 2px; }"
+    },
+    {
+      "name": "Secondary Button", "kind": "button", "refersTo": "button-secondary",
+      "description": "Workflow actions such as Start investigating or Resolve.",
+      "html": "<button class=\"ds-btn\">Start investigating</button>",
+      "css": ".ds-btn { background: #fff; color: #1d2321; border: 1px solid #cfccc2; border-radius: 6px; padding: 7px 14px; font: 400 14px 'Atkinson Hyperlegible', system-ui, sans-serif; cursor: pointer; transition: background-color 140ms ease-out, border-color 140ms ease-out; } .ds-btn:hover { background: #f4f2ec; border-color: #b9b4a7; } .ds-btn:focus-visible { outline: 2px solid #7d5f22; outline-offset: 2px; }"
+    },
+    {
+      "name": "Text Field", "kind": "input", "refersTo": null,
+      "description": "Labelled input above its control.",
+      "html": "<label class=\"ds-field\">Find a source<input class=\"ds-input\" placeholder=\"Part of an IP address\"></label>",
+      "css": ".ds-field { display: grid; gap: 4px; font: 13px 'Atkinson Hyperlegible', system-ui, sans-serif; color: #47524d; } .ds-input { border: 1px solid #cfccc2; background: #fff; border-radius: 6px; padding: 7px 10px; font-size: 14px; color: #1d2321; } .ds-input:hover { border-color: #b9b4a7; } .ds-input:focus-visible { outline: 2px solid #7d5f22; outline-offset: 2px; }"
+    },
+    {
+      "name": "Rail Navigation", "kind": "nav", "refersTo": "nav-item-active",
+      "description": "Cabinet-green rail; active page inverts to label stock.",
+      "html": "<nav class=\"ds-rail\"><a class=\"ds-nav\" aria-current=\"page\">Overview</a><a class=\"ds-nav\">All events <span>129</span></a></nav>",
+      "css": ".ds-rail { background: #24413a; padding: 16px; display: grid; gap: 2px; width: 232px; } .ds-nav { display: flex; justify-content: space-between; padding: 9px 12px; border-radius: 6px; color: #e4ece8; font: 15px 'Atkinson Hyperlegible', system-ui, sans-serif; text-decoration: none; } .ds-nav span { font: 12px 'JetBrains Mono', monospace; } .ds-nav:hover { background: #2d4f46; color: #fff; } .ds-nav[aria-current=page] { background: #fbfaf6; color: #24413a; font-weight: 700; }"
+    },
+    {
+      "name": "Severity Badge", "kind": "chip", "refersTo": "badge-critical",
+      "description": "Severity in words; red only for high and critical.",
+      "html": "<span class=\"ds-badge ds-crit\">critical</span> <span class=\"ds-badge ds-med\">medium</span>",
+      "css": ".ds-badge { display: inline-flex; padding: 1px 8px; border-radius: 999px; font: 12.5px/20px 'Atkinson Hyperlegible', system-ui, sans-serif; } .ds-crit { background: #9c3b2a; color: #fff; } .ds-med { background: #f3e8cd; color: #6e5112; }"
+    },
+    {
+      "name": "Panel", "kind": "card", "refersTo": "panel",
+      "description": "Label stock on a hairline; the only container.",
+      "html": "<section class=\"ds-panel\"><h2>Newest events</h2><p>Interact with a decoy and each interaction appears here.</p></section>",
+      "css": ".ds-panel { background: #fbfaf6; border: 1px solid #cfccc2; border-radius: 8px; padding: 20px; font: 15px/1.5 'Atkinson Hyperlegible', system-ui, sans-serif; color: #1d2321; } .ds-panel h2 { font-size: 17px; margin: 0 0 12px; }"
+    },
+    {
+      "name": "Determination Slip", "kind": "custom", "refersTo": "slip-rule",
+      "description": "Signature component: a judgement laid beside the evidence, never over it.",
+      "html": "<a class=\"ds-slip\" href=\"#\"><div class=\"ds-slip-top\"><span>D-SENS-01 · 172.28.0.51</span><span class=\"ds-sev\">high</span></div><div class=\"ds-slip-title\">Sensitive decoy table read</div><div class=\"ds-slip-det\">det. <b>rule match</b> · confidence high · 4 events</div></a>",
+      "css": ".ds-slip { display: block; background: #fff; border: 1px solid #cfccc2; border-radius: 6px; padding: 12px 16px; color: #1d2321; text-decoration: none; font: 15px 'Atkinson Hyperlegible', system-ui, sans-serif; transition: border-color 160ms ease-out; } .ds-slip:hover { border-color: #b3ad9f; } .ds-slip:focus-visible { outline: 2px solid #7d5f22; outline-offset: 2px; } .ds-slip-top { display: flex; justify-content: space-between; font: 12px 'JetBrains Mono', monospace; color: #5f6a65; } .ds-sev { background: #f6e3de; color: #9c3b2a; border-radius: 999px; padding: 0 8px; font: 12.5px 'Atkinson Hyperlegible', sans-serif; } .ds-slip-title { font-weight: 700; margin-top: 4px; } .ds-slip-det { font-size: 13px; color: #47524d; border-top: 1px dashed #cfccc2; margin-top: 8px; padding-top: 6px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Collection Cabinet",
+    "overview": "The console works like a natural-history collection. Every honeypot interaction is a catalogued specimen: an immutable event with its ID, time, place and raw evidence. Every judgement about it is a determination slip laid beside the specimen, never written over it. A rule's conclusion, an analyst's classification and an AI interpretation are three kinds of slip, styled so a reader can tell them apart at a glance.",
+    "keyCharacteristics": [
+      "Determination slips (rule, analyst, AI) as the signature component",
+      "One hairline border system; no shadows doing structural work",
+      "State told in sentences, not KPI tiles",
+      "Tabular mono figures for every ID, time and count; prose in a hyperlegible sans",
+      "Honest empty, stale and unavailable states everywhere"
+    ],
+    "rules": [
+      { "name": "The Earned Red Rule", "body": "Curator red marks only high and critical severity and the alert states confirmed malicious and error. Being in an alert, matching a rule or failing a login is never red.", "section": "colors" },
+      { "name": "The Series Rule", "body": "Decoy identity uses the validated categorical set in fixed order; text never takes a series colour.", "section": "colors" },
+      { "name": "The Mono-Means-Data Rule", "body": "Monospace marks values that came from a machine. It is never decoration and never sets prose.", "section": "typography" },
+      { "name": "The One Hairline Rule", "body": "Every container declares its edge with a 1px hairline: never a border plus a wide soft shadow, never a side stripe, never a card in a card.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do show raw evidence as preformatted text and never as HTML; attacker strings render inert.",
+      "Do write state as sentences and empty states that say what will make data appear.",
+      "Do mark items new since the last visit with a brass dot and keep rows in place between refreshes.",
+      "Do label AI output as interpretation and keep it in its own slip."
+    ],
+    "donts": [
+      "Don't use red for anything below high severity, including failed logins, rule matches and membership in an alert.",
+      "Don't build KPI-tile rows, donut charts or neon threat maps; the overview answers four questions in sentences.",
+      "Don't put a kicker or eyebrow above a heading, or uppercase-track section titles.",
+      "Don't fill an empty or unavailable view with sample data or a remembered value.",
+      "Don't use monospace for prose or as a \"technical\" costume."
+    ]
+  }
+}

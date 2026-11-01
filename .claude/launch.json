@@ -1,0 +1,8 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "collector", "runtimeExecutable": "sh", "runtimeArgs": ["scripts/dev-collector.sh"], "port": 8000 },
+    { "name": "console", "runtimeExecutable": "sh", "runtimeArgs": ["scripts/dev-console.sh"], "port": 8501 },
+    { "name": "web-decoy", "runtimeExecutable": "sh", "runtimeArgs": ["scripts/dev-web-decoy.sh"], "port": 8081 }
+  ]
+}

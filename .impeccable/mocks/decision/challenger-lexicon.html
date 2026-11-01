@@ -1,0 +1,27 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Lexicon Page</title>
+<style>
+*{box-sizing:border-box;margin:0}
+body{width:1440px;height:900px;overflow:hidden;font-family:Georgia,serif;background:#f1ebdc;color:#1a1a1a;display:grid;grid-template-columns:220px 1fr 300px}
+nav{padding:40px 24px;border-right:1px solid #1a1a1a;font-size:16px;line-height:2.2}
+nav b{display:block;font-size:20px;margin-bottom:16px}
+nav .on{text-decoration:line-through}
+main{padding:40px 48px;max-width:760px}
+.guide{display:flex;justify-content:space-between;border-bottom:2px solid #1a1a1a;padding-bottom:8px;font-size:14px;letter-spacing:.08em;text-transform:uppercase}
+.e{padding:16px 0;border-bottom:1px solid #b9b09b;font-size:17px;line-height:1.5}
+.e b{font-size:19px}
+.e s{color:#6b6253}
+.e i{color:#d4472b;font-style:normal}
+aside{padding:40px 24px}
+.plate{border:3px double #1a1a1a;padding:16px;background:#fff8ea}
+.plate h3{font-size:14px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:12px}
+.bar{height:14px;margin:8px 0;background:#2e4a8a}
+</style></head><body>
+<nav><b>TransNova SOC</b><div class="on">Overview</div><div>Events</div><div>Alerts</div><div>Sources</div><div>Sensors</div><div>ATT&amp;CK</div><div>OWASP</div></nav>
+<main><div class="guide"><span>14:02:11 login_attempt</span><span>13:58:40 page_view</span></div>
+<div class="e"><b>14:02:11</b> web · 172.28.0.50 · login_attempt, failed. <i>W-AUTH-02</i></div>
+<div class="e"><b>14:02:09</b> web · 172.28.0.50 · route_probe /.env, observed.</div>
+<div class="e"><b>14:01:52</b> database · 172.28.0.51 · select customers. <s>benign</s> <i>sensitive read</i></div>
+<div class="e"><b>14:01:30</b> dashboard · 127.0.0.1 · login, succeeded.</div>
+<div class="e"><b>13:58:40</b> web · 172.28.0.50 · page_view /admin.</div></main>
+<aside><div class="plate"><h3>Plate I. Events by decoy</h3><div class="bar" style="width:80%"></div><div class="bar" style="width:55%;background:#d4472b"></div><div class="bar" style="width:20%;background:#1a1a1a"></div></div></aside>
+</body></html>

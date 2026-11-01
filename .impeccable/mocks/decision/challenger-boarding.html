@@ -1,0 +1,27 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Gate Board</title>
+<style>
+*{box-sizing:border-box;margin:0}
+body{width:1440px;height:900px;overflow:hidden;font-family:system-ui,sans-serif;background:#f4f5f7;color:#0f1d2b}
+header{background:#0f1d2b;color:#fff;display:flex;gap:32px;padding:16px 32px;align-items:center;font-size:15px}
+header b{font-size:18px;margin-right:24px}
+header a.on{border-bottom:3px solid #f2b134;padding-bottom:4px}
+.board{background:#0f1d2b;color:#f4f5f7;margin:24px 32px;border-radius:8px;padding:8px 0}
+.r{display:grid;grid-template-columns:140px 140px 200px 1fr 160px;padding:14px 24px;font-family:ui-monospace,monospace;font-size:16px;border-bottom:1px solid #22344a}
+.r.h{font-family:system-ui;font-size:12px;color:#8fa0b0;text-transform:uppercase}
+.r.lit{background:#3a2f12;color:#f2b134}
+.pass{margin:0 32px;display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.pass div{background:#fff;border:1px solid #d5dae0;border-radius:8px;padding:16px;border-left:6px solid #5b6b7a}
+.pass small{font-size:12px;color:#5b6b7a;display:block}
+.pass b{font-size:18px}
+</style></head><body>
+<header><b>TransNova SOC</b><a class="on">Board</a><a>Events</a><a>Alerts</a><a>Sources</a><a>Sensors</a><a>ATT&amp;CK</a><a>OWASP</a></header>
+<section class="board">
+<div class="r h"><span>Time</span><span>Decoy</span><span>Source</span><span>Action</span><span>Status</span></div>
+<div class="r lit"><span>14:02:11</span><span>WEB</span><span>172.28.0.50</span><span>LOGIN ATTEMPT</span><span>ALERT</span></div>
+<div class="r"><span>14:02:09</span><span>WEB</span><span>172.28.0.50</span><span>ROUTE PROBE /.env</span><span>OBSERVED</span></div>
+<div class="r lit"><span>14:01:52</span><span>DATABASE</span><span>172.28.0.51</span><span>SELECT CUSTOMERS</span><span>ALERT</span></div>
+<div class="r"><span>14:01:30</span><span>DASHBOARD</span><span>127.0.0.1</span><span>LOGIN</span><span>OK</span></div>
+<div class="r"><span>14:00:02</span><span>DATABASE</span><span>172.28.0.51</span><span>SHOW TABLES</span><span>OBSERVED</span></div>
+</section>
+<section class="pass"><div><small>Collector</small><b>Receiving</b></div><div><small>Sensors</small><b>2 of 3 healthy</b></div><div><small>Open alerts</small><b>3</b></div></section>
+</body></html>

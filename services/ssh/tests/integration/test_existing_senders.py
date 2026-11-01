@@ -119,8 +119,91 @@ def test_same_requests_get_the_same_answers_as_before(tmp_path: Path) -> None:
     (tmp_path / "b").mkdir()
     before, after = replay(old, tmp_path / "a"), replay(REPO, tmp_path / "b")
     assert len(before) == len(after) > 25
+    before = apply_alert_policy(before)
+    # The three alert-derived reads come back in severity order; ties used last_seen, which scrub() removes.
+    assert after[-9][1] == sorted(after[-9][1], key=lambda a: SEVERITY[a["severity"]])
+    for index in ALERT_READS:
+        _check_extra_evidence(before[index][1], after[index][1])
+        before[index], after[index] = canonical(before[index]), canonical(after[index])
     for was, now in zip(before, after):
         assert was == now
+
+
+# Deliberate alert-policy change (2026-11-01, collector/rules_catalog.py): single-occurrence signals
+# are recorded on the event but no longer open alerts, and X-CORR-01 is a medium-severity,
+# low-confidence hint. Everything else, every ingest answer included, must still match exactly.
+NON_ALERTING = {"W-AUTH-01", "W-ENUM-01"}
+# Threshold and correlation alerts now also link the earlier events that led to them, so their
+# related_event_ids may grow; the old IDs must all still be there (checked in canonical()).
+EXTRA_EVIDENCE = {"W-AUTH-02", "W-AUTH-03", "W-ENUM-02", "X-CORR-01"}
+SEVERITY = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+ALERT_READS = (-9, -8, -7)  # /api/alerts, /api/attackers, /api/attackers/172.28.0.51
+
+
+def _policy(alerts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out = []
+    for a in alerts:
+        if a["rule"] in NON_ALERTING:
+            continue
+        if a["rule"] == "X-CORR-01":
+            a = {**a, "severity": "medium", "confidence": "low"}
+        out.append(a)
+    return out
+
+
+def _highest(alerts: list[dict[str, Any]]) -> str | None:
+    return min((a["severity"] for a in alerts), key=SEVERITY.__getitem__, default=None)
+
+
+def apply_alert_policy(steps: list[Any]) -> list[Any]:
+    steps = list(steps)
+    status, alerts = steps[-9]
+    alerts = _policy(alerts)
+    steps[-9] = (status, alerts)
+    by_ip: dict[str, list[dict[str, Any]]] = {}
+    for a in alerts:
+        by_ip.setdefault(a["source_ip"], []).append(a)
+    status, sources = steps[-8]
+    steps[-8] = (status, [{**s, "alert_count": len(by_ip.get(s["source_ip"], [])),
+                           "highest_severity": _highest(by_ip.get(s["source_ip"], []))} for s in sources])
+    status, profile = steps[-7]
+    kept = _policy(profile["alerts"])
+    steps[-7] = (status, {**profile, "alerts": kept, "alert_count": len(kept), "highest_severity": _highest(kept)})
+    return steps
+
+
+def _alerts_in(body: Any) -> list[dict[str, Any]]:
+    if isinstance(body, list):
+        return [a for a in body if isinstance(a, dict) and "rule" in a]
+    return [a for a in body.get("alerts", [])] if isinstance(body, dict) else []
+
+
+def _check_extra_evidence(was: Any, now: Any) -> None:
+    old = {a["rule"] + a["source_ip"]: set(a["related_event_ids"]) for a in _alerts_in(was) if a["rule"] in EXTRA_EVIDENCE}
+    for a in _alerts_in(now):
+        if a["rule"] in EXTRA_EVIDENCE and a["rule"] + a["source_ip"] in old:
+            assert old[a["rule"] + a["source_ip"]] <= set(a["related_event_ids"])
+
+
+def _strip(body: Any) -> Any:
+    def one(a: Any) -> Any:
+        return {k: v for k, v in a.items() if k != "related_event_ids"} if isinstance(a, dict) and a.get("rule") in EXTRA_EVIDENCE else a
+    if isinstance(body, list):
+        return [one(a) for a in body]
+    if isinstance(body, dict) and isinstance(body.get("alerts"), list):
+        return {**body, "alerts": [one(a) for a in body["alerts"]]}
+    return body
+
+
+def canonical(step: Any) -> Any:
+    status, body = step
+    body = _strip(body)
+    key = lambda d: json.dumps(d, sort_keys=True)  # noqa: E731
+    if isinstance(body, list):
+        return status, sorted(body, key=key)
+    if isinstance(body, dict) and isinstance(body.get("alerts"), list):
+        return status, {**body, "alerts": sorted(body["alerts"], key=key)}
+    return status, body
 
 
 def wait_for(check: Any, seconds: float = 8.0) -> bool:

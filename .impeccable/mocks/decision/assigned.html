@@ -1,0 +1,54 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Collection Cabinet</title>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0}
+body{width:1440px;height:900px;overflow:hidden;font-family:"Atkinson Hyperlegible",system-ui,sans-serif;background:#eceae4;color:#1d2321;display:grid;grid-template-columns:232px 1fr}
+.rail{background:#24413a;color:#dfe7e2;padding:24px 16px;display:flex;flex-direction:column;gap:4px}
+.brand{font-weight:700;font-size:18px;color:#fff;padding:0 12px 24px}
+.brand small{display:block;font-weight:400;font-size:12px;color:#a9bdb4;margin-top:4px}
+.nav a{display:flex;justify-content:space-between;padding:10px 12px;border-radius:6px;font-size:15px;color:#dfe7e2;text-decoration:none}
+.nav a.on{background:#fbfaf6;color:#24413a;font-weight:700}
+.nav b{font-family:"JetBrains Mono";font-size:12px;font-weight:400;opacity:.8}
+main{padding:32px 40px;display:grid;grid-template-columns:1fr 400px;grid-template-rows:auto auto 1fr;gap:24px}
+h1{font-size:28px;grid-column:1/3}
+h1 span{display:block;font-size:16px;font-weight:400;color:#56615c;margin-top:6px}
+.panel{background:#fbfaf6;border:1px solid #cfccc2;border-radius:8px;padding:20px}
+h2{font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#56615c;margin-bottom:12px}
+.state{grid-column:1/3;display:flex;gap:40px;align-items:baseline}
+.state p{font-size:20px}
+.state .n{font-family:"JetBrains Mono";font-size:15px;color:#56615c}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#3d7a5c;margin-right:8px}
+.dot.warn{background:#c08a2a}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th{text-align:left;font-size:12px;color:#56615c;font-weight:400;padding:6px 8px;border-bottom:1px solid #cfccc2}
+td{padding:9px 8px;border-bottom:1px solid #e4e1d8}
+td.m{font-family:"JetBrains Mono";font-size:13px}
+.new td:first-child{box-shadow:inset 3px 0 #a8823a}
+.slip{border:1px solid #cfccc2;border-radius:6px;padding:12px 14px;margin-bottom:10px;background:#fff}
+.slip .rid{font-family:"JetBrains Mono";font-size:12px;color:#56615c}
+.slip .t{font-weight:700;font-size:15px;margin:4px 0}
+.slip .det{font-size:13px;color:#56615c;border-top:1px dashed #cfccc2;margin-top:8px;padding-top:6px}
+.sev{float:right;font-size:12px;padding:2px 8px;border-radius:10px;background:#f3e3df;color:#9c3b2a}
+.sev.med{background:#f4ead3;color:#7a5a17}
+.span{font-family:"JetBrains Mono";font-size:12px;color:#56615c;float:right;font-weight:400;letter-spacing:0;text-transform:none}
+</style></head><body>
+<nav class="rail"><div class="brand">TransNova SOC<small>Three-decoy lab</small></div>
+<div class="nav"><a class="on">Overview</a><a>All events <b>1,284</b></a><a>Alerts <b>3</b></a><a>Sources <b>7</b></a><a>Sensors</a><a>MITRE ATT&amp;CK</a><a>OWASP web</a><a>Settings</a></div></nav>
+<main>
+<h1>Overview<span>What the SOC has observed, and what needs a look.</span></h1>
+<section class="panel state"><p><span class="dot"></span>Collector is receiving events.</p><p><span class="dot warn"></span>1 of 3 sensors is stale (ssh-01, 2 min).</p><span class="n">last event 14:02:11 UTC</span></section>
+<section class="panel"><h2>Newest events <span class="span">13:58:40 – 14:02:11</span></h2>
+<table><tr><th>Time</th><th>Decoy</th><th>Source</th><th>Action</th><th>Outcome</th></tr>
+<tr class="new"><td class="m">14:02:11</td><td>web</td><td class="m">172.28.0.50</td><td>login_attempt</td><td>failed</td></tr>
+<tr class="new"><td class="m">14:02:09</td><td>web</td><td class="m">172.28.0.50</td><td>route_probe /.env</td><td>observed</td></tr>
+<tr><td class="m">14:01:52</td><td>database</td><td class="m">172.28.0.51</td><td>select customers</td><td>succeeded</td></tr>
+<tr><td class="m">14:01:30</td><td>dashboard</td><td class="m">127.0.0.1</td><td>login</td><td>succeeded</td></tr>
+<tr><td class="m">14:00:02</td><td>database</td><td class="m">172.28.0.51</td><td>show tables</td><td>succeeded</td></tr>
+<tr><td class="m">13:58:40</td><td>web</td><td class="m">172.28.0.50</td><td>page_view /admin</td><td>observed</td></tr>
+</table></section>
+<section class="panel"><h2>Open alerts</h2>
+<div class="slip"><span class="sev">high</span><div class="rid">D-SENS-01 · 172.28.0.51</div><div class="t">Sensitive decoy table read</div><div class="det">det. rule match · confidence high · 4 events</div></div>
+<div class="slip"><span class="sev med">medium</span><div class="rid">W-AUTH-02 · 172.28.0.50</div><div class="t">Repeated failed logins</div><div class="det">det. rule match · cf. brute force · 6 events</div></div>
+<div class="slip"><span class="sev med">medium</span><div class="rid">X-CORR-01 · 172.28.0.50</div><div class="t">Same source on two decoys</div><div class="det">tentative · shared IP is not one actor</div></div>
+</section>
+</main></body></html>

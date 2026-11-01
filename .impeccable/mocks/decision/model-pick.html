@@ -1,0 +1,31 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Chain of Custody</title>
+<style>
+*{box-sizing:border-box;margin:0}
+body{width:1440px;height:900px;overflow:hidden;font-family:system-ui,sans-serif;background:#f2efe9;color:#2b2a27;display:grid;grid-template-columns:232px 1fr}
+.rail{background:#2b2a27;color:#e9d9a8;padding:24px 16px}
+.rail b{display:block;font-size:18px;margin-bottom:28px}
+.rail a{display:block;padding:10px 12px;font-size:15px;border-radius:4px}
+.rail a.on{background:#e9d9a8;color:#2b2a27;font-weight:700}
+main{padding:32px 40px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;align-content:start}
+h1{grid-column:1/4;font-size:28px;border-bottom:4px solid #b3261e;padding-bottom:12px}
+.tag{background:#e9d9a8;border:1px solid #c9b77f;border-radius:4px 4px 4px 22px;padding:18px;position:relative;min-height:150px}
+.tag:before{content:"";position:absolute;left:14px;top:14px;width:12px;height:12px;border-radius:50%;background:#f2efe9;border:1px solid #c9b77f}
+.tag .no{font-family:ui-monospace,monospace;font-size:13px;margin-left:24px}
+.tag h3{font-size:17px;margin:12px 0 6px}
+.tag p{font-size:13px;color:#5f6b73}
+.desk{grid-column:1/4;background:#fff;border:1px solid #d8d2c4;padding:20px}
+.desk h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:#5f6b73;margin-bottom:12px}
+.row{display:grid;grid-template-columns:120px 120px 160px 1fr 120px;padding:9px 0;border-bottom:1px solid #eee;font-size:14px}
+.row span:first-child{font-family:ui-monospace,monospace}
+</style></head><body>
+<nav class="rail"><b>TransNova SOC</b><a class="on">Overview</a><a>All events</a><a>Alerts</a><a>Sources</a><a>Sensors</a><a>MITRE ATT&amp;CK</a><a>OWASP web</a><a>Settings</a></nav>
+<main><h1>Custody desk</h1>
+<div class="tag"><span class="no">ALERT 0042 · D-SENS-01</span><h3>Sensitive decoy table read</h3><p>172.28.0.51 · 4 events · sealed 14:01</p></div>
+<div class="tag"><span class="no">ALERT 0041 · W-AUTH-02</span><h3>Repeated failed logins</h3><p>172.28.0.50 · 6 events · sealed 14:02</p></div>
+<div class="tag"><span class="no">ALERT 0040 · X-CORR-01</span><h3>Same source on two decoys</h3><p>tentative · shared IP</p></div>
+<section class="desk"><h2>Intake log</h2>
+<div class="row"><span>14:02:11</span><span>web-01</span><span>172.28.0.50</span><span>login_attempt</span><span>failed</span></div>
+<div class="row"><span>14:02:09</span><span>web-01</span><span>172.28.0.50</span><span>route_probe /.env</span><span>observed</span></div>
+<div class="row"><span>14:01:52</span><span>db-01</span><span>172.28.0.51</span><span>select customers</span><span>succeeded</span></div>
+<div class="row"><span>14:01:30</span><span>soc-auth</span><span>127.0.0.1</span><span>login</span><span>succeeded</span></div>
+</section></main></body></html>

@@ -20,6 +20,10 @@ from test_collector_contract import capture_events
 
 ROUTES = ["/api/events", "/api/alerts", "/api/attackers", "/api/attackers/10.0.0.1", "/api/adaptations", "/api/database/summary",
           "/api/sensors"]
+# The SOC console's reads (collector/console_api.py) sit behind the same read token.
+V2_ROUTES = ["/api/v2/cursor", "/api/v2/summary", "/api/v2/events", "/api/v2/events/facets", "/api/v2/events/x",
+             "/api/v2/alerts", "/api/v2/alerts/x", "/api/v2/sources", "/api/v2/sources/10.0.0.1", "/api/v2/sensors",
+             "/api/v2/ingestion", "/api/v2/rules", "/api/v2/mitre", "/api/v2/owasp"]
 
 
 class Lab:
@@ -46,10 +50,13 @@ def lab(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Lab:
 def test_this_list_covers_every_real_read_route(lab: Lab) -> None:
     real = {route.path for route in lab.module.api.routes if "GET" in getattr(route, "methods", ())}
     assert real == {"/api/events", "/api/alerts", "/api/attackers", "/api/attackers/{source_ip}", "/api/adaptations",
-                    "/api/database/summary", "/api/sensors", "/health"}
+                    "/api/database/summary", "/api/sensors", "/health",
+                    "/api/v2/cursor", "/api/v2/summary", "/api/v2/events", "/api/v2/events/facets", "/api/v2/events/{event_id}",
+                    "/api/v2/alerts", "/api/v2/alerts/{alert_id}", "/api/v2/sources", "/api/v2/sources/{source_ip}",
+                    "/api/v2/sensors", "/api/v2/ingestion", "/api/v2/rules", "/api/v2/mitre", "/api/v2/owasp"}
 
 
-@pytest.mark.parametrize("path", [*ROUTES, "/nothing", "/api/nothing", "/api/events/", "/docs", "/"])
+@pytest.mark.parametrize("path", [*ROUTES, *V2_ROUTES, "/nothing", "/api/nothing", "/api/events/", "/docs", "/"])
 def test_no_token_reads_nothing(lab: Lab, path: str) -> None:
     response = lab.client.get(path, follow_redirects=False)
     assert response.status_code == 401 and response.json() == {"detail": "not authorized"}

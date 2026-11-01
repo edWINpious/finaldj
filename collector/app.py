@@ -14,8 +14,9 @@ from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
 from pydantic import TypeAdapter, ValidationError
 
 from . import ssh_ingest
+from .console_api import register
 from .detections import process_event
-from .guards import BodyGuard
+from .guards import BodyGuard, note_refusal
 from .read_auth import ReadGate
 from .schema import AdaptationRecord, CanonicalEvent, Heartbeat
 from .storage import Store
@@ -51,6 +52,7 @@ def ingest_events(request: Request, body: Any = Body(...)) -> dict[str, int]:
     try:
         events = _events.validate_python(items)
     except ValidationError as exc:
+        note_refusal("event batch failed validation")
         if from_ssh:
             raise HTTPException(status_code=422, detail=ssh_ingest.REJECTED) from None
         raise HTTPException(status_code=422, detail=exc.errors(include_input=False, include_url=False)) from exc
@@ -193,4 +195,5 @@ def health(request: Request) -> dict[str, Any]:
             "sensors": {s["sensor_id"]: ("stale" if s["stale"] else s["status"]) for s in list_sensors()}}
 
 
+register(api, store)
 app = BodyGuard(ReadGate(api))

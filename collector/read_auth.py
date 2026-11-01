@@ -34,7 +34,7 @@ def token() -> bytes | None:
 
 
 async def _refuse(send: Callable[[dict[str, Any]], Awaitable[None]], status: int, detail: str, reason: str) -> None:
-    note_refusal(reason)
+    note_refusal(reason, "read")
     body = json.dumps({"detail": detail}).encode()
     headers = [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]
     if status == 401:

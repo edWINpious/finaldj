@@ -6,3 +6,16 @@ __pycache__/
 .pytest_cache/
 data/
 .venv-db/
+secrets/
+.venv-soc/
+frontend/node_modules/
+frontend/dist/
+.impeccable/questions/
+**/.venv/
+# Local leftovers from manual web-decoy testing (cookie jars, upload probes)
+jar.txt
+services/web/jar.txt
+services/web/big.bin
+services/web/big.txt
+services/web/slow.txt
+services/web/avatar.jpg
